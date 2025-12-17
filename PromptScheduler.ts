@@ -17,8 +17,14 @@ export class PromptScheduler extends Component<typeof PromptScheduler> {
   private stateIndex: number = 0;
   private continuityKeys: string[] = []; 
   private memory: SmartNpcMemory | undefined;
+  
+  // FIX 1: Cache the debug flag locally to avoid 'undefined' errors during external calls
+  private isDebug: boolean = false;
 
   start() {
+    // FIX 2: Store the prop value immediately
+    this.isDebug = this.props.debugMode;
+
     if (this.props.memoryEntity) {
       const busEnt = this.props.memoryEntity as Entity;
       this.memory = busEnt.as(SmartNpcMemory as any) as any;
@@ -39,6 +45,9 @@ export class PromptScheduler extends Component<typeof PromptScheduler> {
 
     const topicObj = TOPIC_DATA[Math.floor(Math.random() * TOPIC_DATA.length)];
     
+    // Safety check for audience array
+    const audienceList = context.studioAudience || [];
+
     const pkg = {
       segment: currentSegment,
       topic: topicObj.label,
@@ -46,7 +55,7 @@ export class PromptScheduler extends Component<typeof PromptScheduler> {
       roomVibe: context.roomVibe,
       playerCount: context.playerCount,
       recentChat: context.recentChat,
-      studioAudience: context.studioAudience, // Pass the Audience List
+      studioAudience: audienceList,
       energy: "medium",
       lengthTarget: "20-30 words",
       continuityKeys: this.continuityKeys
@@ -55,8 +64,9 @@ export class PromptScheduler extends Component<typeof PromptScheduler> {
     const result = PromptAssembler.assemble(pkg as any); 
     this.updateContinuity(result.promptText);
 
-    if (this.props.debugMode) {
-      console.log(`[PromptScheduler] Beat: ${currentSegment} | Audience: ${context.studioAudience.length}`);
+    // FIX 3: Use the cached 'this.isDebug' instead of 'this.props.debugMode'
+    if (this.isDebug) {
+      console.log(`[PromptScheduler] Beat: ${currentSegment} | Audience: ${audienceList.length}`);
     }
     
     this.sendNetworkBroadcastEvent(StreamerPromptEvent, { 
