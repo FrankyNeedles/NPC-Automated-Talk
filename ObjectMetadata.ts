@@ -1,25 +1,24 @@
 // ObjectMetadata.ts
 /**
  * ObjectMetadata.ts
- * A database of "Lore" for objects in the world.
- * 
- * When a player interacts with an object (e.g., "book_ancient"), the system looks it up here
- * to find the 'shortPrompt' and 'toneHint' to feed to the AI.
+ * "Lore" definitions for interactive objects.
+ * The system looks up object IDs here to find out how to describe them to the AI.
  */
 
 export interface ObjectMetadata {
-  id: string;               // Matches the Entity Name or NarrativeID
-  displayName: string;      // Nice name for the UI/AI (e.g. "Ancient Spellbook")
-  shortPrompt: string;      // 1-3 sentences describing the object's significance
-  toneHint: string;         // Adjective for the AI's reaction (e.g. "mysterious", "excited")
-  importance: number;       // 0.0 to 1.0 (How much priority should this event get?)
+  id: string;                 // Matches Entity Name or NarrativeID
+  displayName: string;        // Human-friendly name
+  shortPrompt: string;        // 1-3 sentences describing the object (Used verbatim in prompts)
+  toneHint?: string;          // e.g. "mysterious", "cheerful", "technical"
+  importance?: number;        // 0.0 to 1.0 (Default 0.5)
   
   // -- Tracking Flags --
-  trackRotation?: boolean;  // Should we trigger events if this is spun around?
-  trackScale?: boolean;     // Should we trigger events if this is resized?
+  trackRotation?: boolean;    // Should we emit events when rotated?
+  trackScale?: boolean;       // Should we emit events when resized?
   
-  // -- Optional AI Helpers --
-  exampleLines?: string[];  // Sample things the Streamer might say about it
+  // -- Optional Extras --
+  animationMap?: { [key: string]: string }; // Map logical actions to animation names
+  exampleLines?: string[];    // Seed phrases the NPC might use
 }
 
 // The Central Database
@@ -43,7 +42,7 @@ export const OBJECT_DATABASE: Record<string, ObjectMetadata> = {
     displayName: "Streamer's Mug",
     shortPrompt: "A ceramic mug with the text '#1 GAMER' fading off. It is currently empty.",
     toneHint: "tired but cozy",
-    importance: 0.3, // Low importance, just filler
+    importance: 0.3,
     trackRotation: false
   },
 
@@ -83,7 +82,7 @@ export const OBJECT_DATABASE: Record<string, ObjectMetadata> = {
     displayName: "Golden Llama",
     shortPrompt: "A heavy, solid gold statue of a llama. It is the ultimate prize for the community challenge.",
     toneHint: "hyped",
-    importance: 0.9, // High importance!
+    importance: 0.9,
     trackRotation: true,
     exampleLines: [
       "The Golden Llama! We finally got it!",

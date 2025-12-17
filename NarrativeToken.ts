@@ -1,33 +1,36 @@
 // NarrativeToken.ts
 /**
  * NarrativeToken.ts
- * Defines the structure of "facts" that the world sends to the Brain.
- * This file is a utility module, not a component.
+ * Defines the atomic units of "Reality" that the system observes.
+ * This is a utility module (Type Definition + Factory Helpers).
  */
 
 export type NarrativeTokenType = "object_interaction" | "object_state" | "player_presence" | "system_event";
 
 export interface NarrativeToken {
-  id: string;               // Unique ID for this specific event instance
-  type: NarrativeTokenType; // What kind of event is this?
-  timestamp: number;        // When did it happen?
+  id: string;               // Unique token ID
+  type: NarrativeTokenType; // Category
+  timestamp: number;        // When it happened
+  importance: number;       // 0.0 to 1.0 (Priority)
   
   // -- Core Data --
-  objectId?: string;        // ID of the object involved (e.g., "ancient_book")
-  objectLabel?: string;     // Human-readable name (e.g., "Ancient Spellbook")
-  action?: string;          // What happened? (e.g., "picked_up", "dropped", "opened")
-  actor?: string;           // Who did it? (Player Name or ID)
+  objectId?: string;        // ID of the entity involved
+  objectLabel?: string;     // Human-readable name (e.g. "Ancient Spellbook")
+  action?: string;          // What happened? (e.g. "picked_up", "opened")
+  actor?: string;           // Player Name or ID
   
-  // -- Spatial Data (Optional) --
+  // -- Spatial Data --
   pos?: { x: number, y: number, z: number };
+  rotation?: { x: number, y: number, z: number };
+  scale?: { x: number, y: number, z: number };
   
   // -- Context --
-  importance: number;       // 0.0 to 1.0 (How interesting is this?)
-  meta?: any;               // Any extra data (e.g., animation name, specific state)
+  relatedObjects?: string[]; // IDs of other objects involved
+  meta?: any;                // Extra data (animation names, specific states)
 }
 
 /**
- * Helper to generate a unique ID
+ * Helper: Generate a unique short ID
  */
 function generateId(): string {
   return Math.random().toString(36).substr(2, 9);
@@ -35,7 +38,7 @@ function generateId(): string {
 
 /**
  * Factory: Create an Object Interaction Token
- * Used when a player grabs, drops, or uses an item.
+ * (e.g. Player grabs something)
  */
 export function makeObjectInteraction(
   objectId: string,
@@ -43,7 +46,8 @@ export function makeObjectInteraction(
   action: string,
   actor: string,
   importance: number = 0.5,
-  pos?: { x: number, y: number, z: number }
+  pos?: { x: number, y: number, z: number },
+  rotation?: { x: number, y: number, z: number }
 ): NarrativeToken {
   return {
     id: generateId(),
@@ -53,14 +57,15 @@ export function makeObjectInteraction(
     objectLabel,
     action,
     actor,
+    importance,
     pos,
-    importance
+    rotation
   };
 }
 
 /**
  * Factory: Create an Object State Token
- * Used when an object changes on its own (animation plays, machine turns on).
+ * (e.g. An object animates or changes state on its own)
  */
 export function makeObjectState(
   objectId: string,
@@ -83,11 +88,11 @@ export function makeObjectState(
 
 /**
  * Factory: Create a Player Presence Token
- * Used when a player enters a zone or emotes.
+ * (e.g. Player enters the studio)
  */
 export function makePlayerPresence(
   actor: string,
-  action: string, // e.g., "entered_zone", "waved"
+  action: string, // e.g., "entered_zone", "left_zone"
   importance: number = 0.3,
   pos?: { x: number, y: number, z: number }
 ): NarrativeToken {

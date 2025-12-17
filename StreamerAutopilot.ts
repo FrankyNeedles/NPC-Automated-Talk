@@ -11,7 +11,7 @@
  */
 
 import { Component, PropTypes, NetworkEvent, Entity } from 'horizon/core';
-import { PromptScheduler } from './PromptScheduler'; // Import the new Brain
+import { PromptScheduler } from './PromptScheduler';
 
 // Events
 const ChatToBrainEvent = new NetworkEvent<{ user: string; text: string; timestamp: number }>('ChatToBrainEvent');
@@ -31,10 +31,12 @@ class StreamerAutopilot extends Component<typeof StreamerAutopilot> {
 
   start() {
     // 1. Find the Scheduler
+    // (Cast to any to avoid strict type issues with custom components)
     if (this.props.schedulerEntity) {
       const ent = this.props.schedulerEntity as Entity;
       this.scheduler = ent.as(PromptScheduler as any) as any;
     } else {
+      // Fallback: Check if it's on the same object
       this.scheduler = this.entity.as(PromptScheduler as any) as any;
     }
 
@@ -53,6 +55,9 @@ class StreamerAutopilot extends Component<typeof StreamerAutopilot> {
     this.async.setTimeout(() => this.triggerNextBeat(), 3000);
   }
 
+  /**
+   * Incoming Chat (Keyboard)
+   */
   private handleChatInput(data: { user: string; text: string; timestamp: number }) {
     if (!this.scheduler) return;
     
@@ -64,28 +69,37 @@ class StreamerAutopilot extends Component<typeof StreamerAutopilot> {
     }
   }
 
+  /**
+   * Signal from NPC that they finished talking
+   */
   private handleSpeechComplete() {
     if (!this.isWaitingForSpeech) return;
 
     this.isWaitingForSpeech = false;
     
+    // Clear safety timer
     if (this.recoveryTimer) {
       this.async.clearTimeout(this.recoveryTimer);
       this.recoveryTimer = null;
     }
 
+    // Calculate Pacing
     const delay = this.props.minDelay + Math.random() * (this.props.maxDelay - this.props.minDelay);
     if (this.props.debugMode) console.log(`[StreamerAutopilot] Speech done. Waiting ${delay.toFixed(1)}s...`);
 
+    // Schedule next beat
     this.async.setTimeout(() => this.triggerNextBeat(), delay * 1000);
   }
 
+  /**
+   * The Heartbeat: Tell Scheduler to go
+   */
   private triggerNextBeat() {
     if (this.isWaitingForSpeech || !this.scheduler) return;
 
     this.isWaitingForSpeech = true;
 
-    // Safety timeout
+    // Safety timeout: If NPC crashes or takes too long, force a reset after 60s
     this.recoveryTimer = this.async.setTimeout(() => {
       console.warn('[StreamerAutopilot] Recovery: NPC took too long. Forcing next beat.');
       this.isWaitingForSpeech = false;
