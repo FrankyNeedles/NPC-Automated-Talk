@@ -1,53 +1,76 @@
 // TopicsDatabase.ts
 /**
- * TopicDatabase.ts
- * REAL NEWS HEADLINES for December 16, 2025.
+ * TopicsDatabase.ts
+ * The "AP Newswire" feed for the Broadcast System.
+ * 
+ * Contains structured News Stories for December 17, 2025.
+ * Used by StationDirector to build the run-of-show.
  */
 
-export const TOPIC_DATA = [
+export interface NewsStory {
+  id: string;
+  headline: string;
+  category: "Politics" | "Tech" | "Sports" | "Entertainment" | "World" | "Weather";
+  body: string;       // The core facts of the story
+  hostAngle: string;  // Hint for the Anchor (Professional/Lead)
+  coHostAngle: string;// Hint for the Co-Host (Color/Reaction)
+}
+
+export const NEWS_WIRE: NewsStory[] = [
   {
-    label: "Word of the Year: 'Slop'",
-    style: "Rant, passionate",
-    prompt: "Merriam-Webster just announced the 2025 Word of the Year is 'Slop'—defined as low-quality digital content. Rant about how perfect this is. Ask chat if they feel like the internet is just 90% AI slop now."
+    id: "tech_slop",
+    headline: "Word of the Year 2025: 'Slop'",
+    category: "Tech",
+    body: "Merriam-Webster has officially declared 'Slop' as the 2025 Word of the Year. Defined as 'untidy, messy, or low-quality material', it specifically refers to the flood of AI-generated spam clogging the internet.",
+    hostAngle: "Professional. Define the word clearly.",
+    coHostAngle: "Cynical/Rant. Complain about how you can't find 'real' human content anymore."
   },
   {
-    label: "Trump Sues BBC",
-    style: "Breaking News, Drama",
-    prompt: "Breaking political news: Donald Trump has filed a lawsuit against the BBC today, claiming they wrongly edited his speech before the Capitol anniversary. Ask chat if they think news edits are 'fake news' or just editing."
+    id: "pol_trump_bbc",
+    headline: "Trump Files Lawsuit Against BBC",
+    category: "Politics",
+    body: "Donald Trump has filed a defamation lawsuit against the BBC. The suit alleges the broadcaster unfairly edited his speech regarding the January 6th anniversary, misrepresenting his stance.",
+    hostAngle: "Neutral/Serious. Just the facts of the filing.",
+    coHostAngle: "Opinionated. Debate whether editing is 'fake news' or just standard journalism."
   },
   {
-    label: "AI Biosecurity Hearing",
-    style: "Tech Watch, Serious",
-    prompt: "Heads up for tomorrow: The House Committee is holding a hearing on 'AI and Biology'. They are worried about AI creating bio-weapons. Discuss if this is valid paranoia or just sci-fi fearmongering."
+    id: "spt_mancity",
+    headline: "Man City Dominates Palace",
+    category: "Sports",
+    body: "Manchester City secured a clean 3-0 victory over Crystal Palace yesterday, keeping the pressure high on Arsenal in the title race. Haaland scored twice.",
+    hostAngle: "High Energy. Play-by-play style recap.",
+    coHostAngle: "Impressed. Comment on Haaland's unstoppable form."
   },
   {
-    label: "EU Security Deal",
-    style: "International Correspondent",
-    prompt: "Big news from Berlin: EU leaders and the US have agreed to extensive security guarantees for Ukraine. Explain that this commits to defending Kyiv in future attacks. Ask if chat thinks this will finally stabilize the region."
+    id: "world_chile",
+    headline: "Shift in South America: Kast Wins Chile",
+    category: "World",
+    body: "José Antonio Kast has claimed victory in the Chilean presidential election. This marks a significant shift towards the political right for the nation.",
+    hostAngle: "Formal. Discuss the geopolitical implication.",
+    coHostAngle: "Curious. Ask what this means for international relations."
   },
   {
-    label: "Man City Victory",
-    style: "Sports Caster, Hype",
-    prompt: "Sports update: Manchester City just kept the pressure on Arsenal with a clean 3-0 win over Crystal Palace. Ask the chat if anyone actually thinks City is going to lose the title this year."
+    id: "tech_holidays",
+    headline: "Holiday Tech Shortages Update",
+    category: "Tech",
+    body: "Supply chain reports confirm that the new 'Neural-Link' haptic gloves are sold out globally until February 2026. Scalpers are listing them for 300% markup.",
+    hostAngle: "Consumer Watchdog. Warn viewers about scalpers.",
+    coHostAngle: "Frustrated gamer. Complain that you still haven't managed to buy a pair."
   },
   {
-    label: "FDA Sunscreen Update",
-    style: "Lighthearted, confused",
-    prompt: "Random news: The FDA just proposed adding 'Bemotrizinol' to sunscreens. It's been used in Europe for years. Joke about how the US is always 10 years late to the party on basic health stuff."
+    id: "weather_blizzard",
+    headline: "East Coast Freeze",
+    category: "Weather",
+    body: "A massive winter storm is battering the East Coast today. Power outages reported in three states. Internet traffic is at an all-time high as people stay inside.",
+    hostAngle: "Concerned Meteorologist. Safety warnings.",
+    coHostAngle: "Cozy. Talk about hot cocoa and gaming during a blizzard."
   },
   {
-    label: "Chile Election Results",
-    style: "World Politics",
-    prompt: "International update: Far-right candidate José Antonio Kast has been elected president of Chile. Mention how this shifts the political map in South America and ask chat if they follow international elections."
-  },
-  {
-    label: "Bondi Beach Aftermath",
-    style: "Somber, Respectful",
-    prompt: "A serious note: The death toll from the Sydney Bondi Beach attack has risen to 15. Send thoughts to the families in Australia. Keep it brief and respectful, then pivot to a safer topic."
-  },
-  {
-    label: "UK Spy Chief Warning",
-    style: "Thriller, Suspense",
-    prompt: "The head of MI6 gave a rare speech today warning about an 'aggressive' Russian threat. Talk about how it feels like we are living in a James Bond movie lately."
+    id: "ent_bond",
+    headline: "Real Life James Bond?",
+    category: "World",
+    body: "The head of MI6 gave a rare public speech warning of aggressive espionage threats in Europe, sounding more like a spy thriller than a briefing.",
+    hostAngle: "Intrigued. Quote the specific warnings.",
+    coHostAngle: "Jokey. Make James Bond references or ask where the gadgets are."
   }
 ];
