@@ -1,11 +1,9 @@
 // AutomatedHost.ts
 /**
  * AutomatedHost.ts
- * The "Talent".
+ * The Talent.
  * 
- * UPDATE: Added "Smart Timing".
- * It estimates speech duration based on the length of the prompt instructions.
- * This prevents the Anchor from being cut off during long news stories.
+ * UPGRADE: Uses 'Pacing Style' to calculate clearer, more natural speech gaps.
  */
 
 import { Component, PropTypes, NetworkEvent } from 'horizon/core';
@@ -16,12 +14,9 @@ const HostSpeechCompleteEvent = new NetworkEvent<{ hostID: string; contentSummar
 
 export class AutomatedHost extends Component<typeof AutomatedHost> {
   static propsDefinition = {
-    hostID: { type: PropTypes.String, default: "HostA", label: "Host ID (A or B)" },
-    
-    // TIMING CONTROLS
-    minSpeechDuration: { type: PropTypes.Number, default: 5, label: "Min Duration (s)" },
-    padding: { type: PropTypes.Number, default: 2.0, label: "Safety Padding (s)" },
-    
+    hostID: { type: PropTypes.String, default: "HostA", label: "Host ID" },
+    minSpeechDuration: { type: PropTypes.Number, default: 3, label: "Min Floor (s)" },
+    padding: { type: PropTypes.Number, default: 1.5, label: "Gap Padding (s)" }, 
     debugMode: { type: PropTypes.Boolean, default: false }
   };
 
@@ -39,17 +34,20 @@ export class AutomatedHost extends Component<typeof AutomatedHost> {
 
     this.isBusy = true;
 
-    // 1. Construct Prompt
+    const myName = this.props.hostID === "HostA" ? "Alex (Anchor)" : "Casey (CoHost)";
+    const otherName = this.props.hostID === "HostA" ? "Casey" : "Alex";
+
+    // 1. Prompt
     const systemPrompt = 
-      `ROLE: You are the ${data.role} of a TV Broadcast.\n` +
+      `ROLE: You are ${myName}.\n` +
       `TOPIC: ${data.topic}\n` +
       `CONTEXT: ${data.context}\n` +
-      `PREVIOUS SPEAKER SAID: "${data.lastSpeakerContext}"\n` +
+      `PREVIOUSLY: ${otherName} said: "${data.lastSpeakerContext}"\n` +
       `INSTRUCTIONS: ${data.instructions}\n` +
-      `CONSTRAINTS: Respond naturally. Do not repeat the previous speaker.\n` +
+      `CONSTRAINTS: Speak naturally to ${otherName}. Keep it broadcast quality.\n` +
       `OUTPUT: Spoken dialogue only.`;
 
-    if (this.props.debugMode) console.log(`[${this.props.hostID}] Speaking on: ${data.topic}`);
+    if (this.props.debugMode) console.log(`[${this.props.hostID}] Speaking...`);
 
     // 2. Speak
     try {
@@ -63,20 +61,24 @@ export class AutomatedHost extends Component<typeof AutomatedHost> {
       console.warn("AI Error", e);
     }
 
-    // 3. SMART TIMING LOGIC
-    // We guess the duration based on how complex the instructions were.
-    // Long context (News Body) = Longer Speech.
-    const contextLength = data.context.length + data.instructions.length;
-    
-    // Rough formula: 1 second for every 15 characters of input context (capped)
-    const estimatedSpeech = Math.min(contextLength / 15, 20); 
-    
-    // Take the larger of: Minimum setting OR Calculated estimate
-    const finalDuration = Math.max(this.props.minSpeechDuration, estimatedSpeech) + this.props.padding;
+    // 3. PACING CALCULATION
+    // Extract pacing style from instructions (hacky but effective if data.instructions contains it)
+    // Ideally ShowScheduler passes it explicitly, but we can infer default WPM.
+    let wpm = 140; // Default Casual
+    if (data.instructions.includes("Rapid")) wpm = 180;
+    if (data.instructions.includes("Relaxed")) wpm = 110;
 
-    if (this.props.debugMode) console.log(`[${this.props.hostID}] Waiting ${finalDuration.toFixed(1)}s`);
+    // Estimate: Words = Length / 5 chars per word
+    const estimatedWords = (data.context.length + data.instructions.length) / 5;
+    
+    // Seconds = (Words / WPM) * 60
+    // We clamp the estimation because AI output length varies
+    const estimatedSeconds = Math.min((estimatedWords / wpm) * 60, 20); 
+    
+    // Final Duration
+    const finalDuration = Math.max(this.props.minSpeechDuration, estimatedSeconds) + this.props.padding;
 
-    // 4. Wait & Signal
+    // 4. Timer
     this.async.setTimeout(() => {
       this.finishSpeaking(data.topic);
     }, finalDuration * 1000);
