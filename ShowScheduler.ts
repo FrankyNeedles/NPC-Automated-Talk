@@ -1,8 +1,16 @@
 // ShowScheduler.ts
+/**
+ * ShowScheduler.ts
+ * The "Floor Manager".
+ * 
+ * UPDATE: Removed manual timing slots. 
+ * Now obeys the Director's 'duration' and 'pacingStyle'.
+ */
+
 import { Component, PropTypes, NetworkEvent, Entity } from 'horizon/core';
+import { StationDirector } from './StationDirector';
 import { SmartNpcMemory } from './SmartNpcMemory';
 
-// Events
 const RequestSegmentEvent = new NetworkEvent('RequestSegmentEvent');
 const DirectorCueEvent = new NetworkEvent<any>('DirectorCueEvent');
 const CueHostEvent = new NetworkEvent<any>('CueHostEvent');
@@ -10,19 +18,21 @@ const HostSpeechCompleteEvent = new NetworkEvent<{ hostID: string; contentSummar
 
 export class ShowScheduler extends Component<typeof ShowScheduler> {
   static propsDefinition = {
-    // directorEntity removed (we use events now)
     memoryEntity: { type: PropTypes.Entity, label: "Memory Link" },
-    baseSegmentDuration: { type: PropTypes.Number, default: 45, label: "Avg Segment Time (s)" },
-    turnDelay: { type: PropTypes.Number, default: 1.5, label: "Turn Delay (s)" },
     debugMode: { type: PropTypes.Boolean, default: true }
   };
 
   private memory: SmartNpcMemory | undefined;
   private currentTurn: number = 0;
   private isSegmentActive: boolean = false;
-  private currentCue: any = null;
   private segmentEndTime: number = 0;
   private isDebug: boolean = false;
+  private currentTurnDelay: number = 1.5;
+
+  // Pre-Fetch
+  private currentCue: any = null; 
+  private nextCue: any = null;    
+  private isFetching: boolean = false;
 
   start() {
     this.isDebug = this.props.debugMode;
@@ -32,30 +42,58 @@ export class ShowScheduler extends Component<typeof ShowScheduler> {
       this.memory = ent.as(SmartNpcMemory as any) as any;
     }
 
-    if (this.isDebug) console.log(`[Scheduler] Online.`);
-
-    this.connectNetworkBroadcastEvent(DirectorCueEvent, this.handleDirectorCue.bind(this));
+    this.connectNetworkBroadcastEvent(DirectorCueEvent, this.handleDirectorResponse.bind(this));
     this.connectNetworkBroadcastEvent(HostSpeechCompleteEvent, this.handleSpeechComplete.bind(this));
 
-    // Kickoff
     this.async.setTimeout(() => {
         this.requestNextSegment();
     }, 5000);
   }
 
   private requestNextSegment() {
-      if (this.isDebug) console.log("[Scheduler] Broadcasting Request Signal...");
-      // FIRE THE EVENT
+      if (this.isFetching) return;
+      this.isFetching = true;
+      if (this.isDebug) console.log("[Scheduler] Requesting Director Plan...");
       this.sendNetworkBroadcastEvent(RequestSegmentEvent, {});
   }
 
-  private handleDirectorCue(data: any) {
-    if (this.isDebug) console.log(`[Scheduler] Received Plan: ${data.segment}`);
-    this.currentCue = data;
+  private handleDirectorResponse(data: any) {
+    this.isFetching = false;
+    if (!this.isSegmentActive) {
+        this.startSegment(data);
+    } else {
+        if (this.isDebug) console.log(`[Scheduler] Buffered Next: ${data.segment}`);
+        this.nextCue = data;
+    }
+  }
+
+  private startSegment(cueData: any) {
+    this.currentCue = cueData;
+    this.nextCue = null;
     this.currentTurn = 0;
     this.isSegmentActive = true;
-    this.segmentEndTime = Date.now() + (this.props.baseSegmentDuration * 1000);
+    
+    // 1. USE DYNAMIC DURATION
+    this.segmentEndTime = Date.now() + (cueData.duration * 1000);
+
+    // 2. ADJUST PACING (Turn Delay)
+    // Rapid = Fast arguments (0.5s gap). Relaxed = Slow (2.5s gap).
+    if (cueData.pacingStyle === "Rapid") this.currentTurnDelay = 0.5;
+    else if (cueData.pacingStyle === "Debate") this.currentTurnDelay = 1.0;
+    else this.currentTurnDelay = 2.0;
+
+    if (this.isDebug) console.log(`[Scheduler] LIVE: ${cueData.segment} (${cueData.duration}s) | Style: ${cueData.pacingStyle}`);
+    
+    if (this.memory) {
+       this.memory.saveGlobalState(cueData.topicID, 0); 
+    }
+
     this.cueNextSpeaker();
+
+    // Start pre-fetch halfway through (safe bet)
+    this.async.setTimeout(() => {
+        this.requestNextSegment();
+    }, (cueData.duration / 2) * 1000);
   }
 
   private cueNextSpeaker() {
@@ -75,18 +113,19 @@ export class ShowScheduler extends Component<typeof ShowScheduler> {
     if (this.memory) {
       const last = this.memory.getLastSpeechContext();
       if (last.speaker !== targetID && last.speaker !== "None") {
-        lastContext = `Your co-host just said: "${last.content}". React to this.`;
+        lastContext = `Your co-host said: "${last.content}". React to this.`;
       }
     }
 
-    if (this.isDebug) console.log(`[Scheduler] Cueing ${targetID}...`);
+    // Pass the pacing style to the Host too (optional, but good for context)
+    const pacingNote = `Pacing: ${this.currentCue.pacingStyle}.`;
 
     this.sendNetworkBroadcastEvent(CueHostEvent, {
       targetHostID: targetID,
       role: role,
       topic: this.currentCue.headline,
       context: this.currentCue.context,
-      instructions: instructions,
+      instructions: `${instructions} ${pacingNote}`,
       lastSpeakerContext: lastContext
     });
 
@@ -94,26 +133,23 @@ export class ShowScheduler extends Component<typeof ShowScheduler> {
   }
 
   private handleSpeechComplete(data: { hostID: string; contentSummary: string }) {
-    if (this.isDebug) console.log(`[Scheduler] ${data.hostID} finished.`);
     if (this.memory) {
       this.memory.logBroadcast(data.hostID, data.contentSummary);
     }
 
+    // Dynamic Delay
     this.async.setTimeout(() => {
       this.cueNextSpeaker();
-    }, this.props.turnDelay * 1000); 
+    }, this.currentTurnDelay * 1000); 
   }
 
   private finishSegment() {
     this.isSegmentActive = false;
-    if (this.isDebug) console.log(`[Scheduler] Segment Complete. Requesting next...`);
-    
-    if (this.memory && this.currentCue) {
-       this.memory.saveGlobalState(this.currentCue.topicID, 0); 
+    if (this.nextCue) {
+        this.startSegment(this.nextCue);
+    } else {
+        this.requestNextSegment();
     }
-
-    // Loop back to Director
-    this.requestNextSegment();
   }
 }
 
