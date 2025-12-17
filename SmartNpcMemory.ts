@@ -1,4 +1,11 @@
 // SmartNpcMemory.ts
+/**
+ * SmartNpcMemory.ts
+ * The Shared Brain.
+ * 
+ * FIX: Cached 'debugMode' to avoid runtime errors during external calls.
+ */
+
 import { Component, PropTypes, NetworkEvent, Player } from 'horizon/core';
 import { NarrativeToken } from './NarrativeToken';
 
@@ -26,12 +33,18 @@ export class SmartNpcMemory extends Component<typeof SmartNpcMemory> {
   private currentTopicID: string = "tech_slop";
   private segmentIndex: number = 0;
 
+  // FIX: Local Cache
+  private isDebug: boolean = false;
+
   start() {
+    // FIX: Cache the prop immediately
+    this.isDebug = this.props.debugMode;
+
     this.connectNetworkBroadcastEvent(NarrativeTokenEvent, this.handleObjectToken.bind(this));
     this.connectNetworkBroadcastEvent(ChatMessageEvent, this.handleChat.bind(this));
   }
 
-  // --- Public Methods (Fixing Console Errors) ---
+  // --- Public Methods (Safe for External Calls) ---
 
   public addStudioAudience(name: string) {
     if (!this.studioAudience.includes(name)) this.studioAudience.push(name);
@@ -43,7 +56,8 @@ export class SmartNpcMemory extends Component<typeof SmartNpcMemory> {
 
   public handlePlayerEntry(player: Player) {
     this.addStudioAudience(player.name.get());
-    if (this.props.debugMode) console.log(`[Memory] Player entered: ${player.name.get()}`);
+    // FIX: Use cached isDebug
+    if (this.isDebug) console.log(`[Memory] Player entered: ${player.name.get()}`);
   }
 
   public handlePlayerExit(name: string) {
@@ -70,6 +84,8 @@ export class SmartNpcMemory extends Component<typeof SmartNpcMemory> {
   public logBroadcast(hostID: string, contentSummary: string) {
     this.lastSpeakerID = hostID;
     this.lastSpokenContent = contentSummary;
+    // FIX: Use cached isDebug
+    if (this.isDebug) console.log(`[Memory] ${hostID} finished speaking.`);
   }
 
   public getLatestChatQuestion(): string {

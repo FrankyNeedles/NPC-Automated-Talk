@@ -1,10 +1,10 @@
 // StationDirector.ts
 /**
  * StationDirector.ts
- * The "Producer" of the Broadcast.
+ * The "Producer" (Hidden NPC).
  * 
- * UPDATE: Passes Audience Context to ALL segments so hosts can make
- * small, passive references without stopping the show.
+ * UPDATE: Now listens for 'RequestSegmentEvent' instead of direct method calls.
+ * This fixes the communication breakdown between the Brain and the NPC.
  */
 
 import { Component, PropTypes, NetworkEvent, Entity } from 'horizon/core';
@@ -12,6 +12,9 @@ import { Npc, NpcConversation } from 'horizon/npc';
 import { NEWS_WIRE, NewsStory } from './TopicsDatabase';
 import { VortexMath, BroadcastSegment } from './VortexMath';
 import { SmartNpcMemory } from './SmartNpcMemory';
+
+// NEW: The "Start" Signal
+const RequestSegmentEvent = new NetworkEvent('RequestSegmentEvent');
 
 const DirectorCueEvent = new NetworkEvent<{ 
   segment: string; 
@@ -25,70 +28,83 @@ const DirectorCueEvent = new NetworkEvent<{
 export class StationDirector extends Component<typeof StationDirector> {
   static propsDefinition = {
     memoryEntity: { type: PropTypes.Entity, label: "Memory Link" },
-    debugMode: { type: PropTypes.Boolean, default: false }
+    debugMode: { type: PropTypes.Boolean, default: true }
   };
 
   private memory: SmartNpcMemory | undefined;
   private directorNPC: Npc | undefined;
   private currentVortexState: number = 1; 
   private recentTopicIDs: string[] = [];
+  
+  private isDebug: boolean = false;
 
   async start() {
-    this.directorNPC = this.entity.as(Npc);
-    if (!this.directorNPC) console.error("[StationDirector] CRITICAL: Attach to Hidden NPC!");
+    this.isDebug = this.props.debugMode;
 
+    // 1. Get NPC Reference
+    this.directorNPC = this.entity.as(Npc);
+    
+    // 2. Link Memory
     if (this.props.memoryEntity) {
       const ent = this.props.memoryEntity as Entity;
       this.memory = ent.as(SmartNpcMemory as any) as any;
-    } else {
-      this.memory = this.entity.as(SmartNpcMemory as any) as any;
     }
+
+    if (this.isDebug) console.log(`[Director] Online. Waiting for signal...`);
+
+    // 3. LISTEN FOR THE SIGNAL (The Fix)
+    this.connectNetworkBroadcastEvent(RequestSegmentEvent, this.planNextSegment.bind(this));
   }
 
   public async planNextSegment() {
-    if (!this.directorNPC) return;
+    if (this.isDebug) console.log("[Director] Signal Received! Thinking...");
 
-    // 1. Advance Clock
+    // Safety: Ensure we have the NPC component
+    if (!this.directorNPC) {
+        this.directorNPC = this.entity.as(Npc);
+    }
+    if (!this.directorNPC) {
+        console.error("[Director] CRITICAL: Script is not on an NPC.");
+        return;
+    }
+
+    // Advance Clock
     this.currentVortexState = VortexMath.getNextState(this.currentVortexState);
     const segmentLabel = VortexMath.getSegmentLabel(this.currentVortexState);
 
-    // 2. Get Global Context (Vibe & Audience)
+    // Get Data
     let roomVibe = this.memory ? this.memory.getRoomVibe() : "Normal";
-    
-    // NEW: Get Audience List for Background Context
     const audience = this.memory ? this.memory.getAudienceList() : [];
-    const audienceStr = audience.length > 0 ? `(Studio Guests: ${audience.join(", ")})` : "(Studio Empty)";
+    const audienceStr = audience.length > 0 ? `(Guests: ${audience.join(", ")})` : "(Empty)";
 
-    // 3. Prepare AI Prompt
-    // We include the audience string in the CONTEXT section for the AI
+    // Prepare AI
     const availableStories = NEWS_WIRE.filter(s => !this.recentTopicIDs.includes(s.id))
         .map(s => `ID: ${s.id} | Headline: "${s.headline}" (${s.category})`).join('\n');
     
     const systemPrompt = 
-      `ACT AS: A TV Show Producer.\n` +
-      `CONTEXT: Live Broadcast. Vibe: ${roomVibe}. ${audienceStr}.\n` +
-      `CURRENT SEGMENT: ${segmentLabel}.\n` +
-      `AVAILABLE STORIES:\n${availableStories}\n` +
-      `TASK: Select the BEST story. Write stage directions.\n` +
-      `NOTE: If Studio Guests are present, you may instruct hosts to briefly acknowledge them, but DO NOT stop the news flow.\n` +
+      `ACT AS: TV Producer.\n` +
+      `CONTEXT: Live. Vibe: ${roomVibe}. ${audienceStr}.\n` +
+      `SEGMENT: ${segmentLabel}.\n` +
+      `STORIES:\n${availableStories}\n` +
+      `TASK: Pick 1 story. Write directions.\n` +
       `OUTPUT FORMAT:\n` +
       `SELECTED_ID: [ID]\n` +
       `ANCHOR_DIR: [Instruction]\n` +
       `COHOST_DIR: [Instruction]`;
 
-    if (this.props.debugMode) console.log(`[Director] Planning ${segmentLabel}...`);
-
     try {
       const aiReady = await NpcConversation.isAiAvailable();
       if (!aiReady) {
+        if (this.isDebug) console.log("[Director] AI Unavailable. Using Fallback.");
         this.fallbackPlan(segmentLabel);
         return;
       }
 
+      // "Think" (Generate Text)
       const response = await this.directorNPC.conversation.elicitResponse(systemPrompt);
       const responseText = typeof response === 'string' ? response : (response as any).text;
       
-      this.parseAndCue(responseText, segmentLabel, audienceStr); // Pass audience string down
+      this.parseAndCue(responseText, segmentLabel, audienceStr);
 
     } catch (e) {
       console.warn("[Director] AI Error", e);
@@ -97,9 +113,11 @@ export class StationDirector extends Component<typeof StationDirector> {
   }
 
   private parseAndCue(aiText: string, segment: string, audienceContext: string) {
+    if (this.isDebug) console.log(`[Director] Plan Generated.`);
+
     let selectedID = NEWS_WIRE[0].id;
-    let anchorInstr = "Introduce the story.";
-    let coHostInstr = "React to the story.";
+    let anchorInstr = "Introduce story.";
+    let coHostInstr = "React.";
 
     const idMatch = aiText.match(/SELECTED_ID:\s*(\w+)/);
     const anchorMatch = aiText.match(/ANCHOR_DIR:\s*(.*)/);
@@ -113,16 +131,13 @@ export class StationDirector extends Component<typeof StationDirector> {
     if (this.recentTopicIDs.length > 4) this.recentTopicIDs.shift();
 
     const story = NEWS_WIRE.find(s => s.id === selectedID) || NEWS_WIRE[0];
-
-    // Build Context Payload
-    // We append the audience info here so the Hosts actually see it in their prompts
     let contextData = `Story: ${story.body}. ${audienceContext}`;
     
     if (segment === BroadcastSegment.AUDIENCE) {
        const question = this.memory ? this.memory.getLatestChatQuestion() : "";
-       contextData = `Q&A Session. ${audienceContext}. Question: ${question || "None"}`;
-       anchorInstr = "Answer the question or welcome the guests.";
-       coHostInstr = "Encourage the chat.";
+       contextData = `Q&A. ${audienceContext}. Question: ${question || "None"}`;
+       anchorInstr = "Answer question/Welcome guests.";
+       coHostInstr = "Encourage chat.";
     }
 
     this.sendNetworkBroadcastEvent(DirectorCueEvent, {

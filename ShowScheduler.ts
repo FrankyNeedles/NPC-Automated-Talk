@@ -1,63 +1,60 @@
 // ShowScheduler.ts
 import { Component, PropTypes, NetworkEvent, Entity } from 'horizon/core';
-import { StationDirector } from './StationDirector';
 import { SmartNpcMemory } from './SmartNpcMemory';
 
+// Events
+const RequestSegmentEvent = new NetworkEvent('RequestSegmentEvent');
 const DirectorCueEvent = new NetworkEvent<any>('DirectorCueEvent');
 const CueHostEvent = new NetworkEvent<any>('CueHostEvent');
 const HostSpeechCompleteEvent = new NetworkEvent<{ hostID: string; contentSummary: string }>('HostSpeechCompleteEvent');
 
 export class ShowScheduler extends Component<typeof ShowScheduler> {
   static propsDefinition = {
-    directorEntity: { type: PropTypes.Entity, label: "Director Link" },
+    // directorEntity removed (we use events now)
     memoryEntity: { type: PropTypes.Entity, label: "Memory Link" },
-    
-    // NEW: Creator Tool for Pacing
     baseSegmentDuration: { type: PropTypes.Number, default: 45, label: "Avg Segment Time (s)" },
     turnDelay: { type: PropTypes.Number, default: 1.5, label: "Turn Delay (s)" },
-    
-    debugMode: { type: PropTypes.Boolean, default: false }
+    debugMode: { type: PropTypes.Boolean, default: true }
   };
 
-  private director: StationDirector | undefined;
   private memory: SmartNpcMemory | undefined;
   private currentTurn: number = 0;
   private isSegmentActive: boolean = false;
   private currentCue: any = null;
   private segmentEndTime: number = 0;
+  private isDebug: boolean = false;
 
   start() {
-    if (this.props.directorEntity) {
-      const ent = this.props.directorEntity as Entity;
-      this.director = ent.as(StationDirector as any) as any;
-    } else {
-      this.director = this.entity.as(StationDirector as any) as any;
-    }
+    this.isDebug = this.props.debugMode;
 
     if (this.props.memoryEntity) {
       const ent = this.props.memoryEntity as Entity;
       this.memory = ent.as(SmartNpcMemory as any) as any;
-    } else {
-      this.memory = this.entity.as(SmartNpcMemory as any) as any;
     }
+
+    if (this.isDebug) console.log(`[Scheduler] Online.`);
 
     this.connectNetworkBroadcastEvent(DirectorCueEvent, this.handleDirectorCue.bind(this));
     this.connectNetworkBroadcastEvent(HostSpeechCompleteEvent, this.handleSpeechComplete.bind(this));
 
+    // Kickoff
     this.async.setTimeout(() => {
-      if (this.director) this.director.planNextSegment();
+        this.requestNextSegment();
     }, 5000);
   }
 
+  private requestNextSegment() {
+      if (this.isDebug) console.log("[Scheduler] Broadcasting Request Signal...");
+      // FIRE THE EVENT
+      this.sendNetworkBroadcastEvent(RequestSegmentEvent, {});
+  }
+
   private handleDirectorCue(data: any) {
+    if (this.isDebug) console.log(`[Scheduler] Received Plan: ${data.segment}`);
     this.currentCue = data;
     this.currentTurn = 0;
     this.isSegmentActive = true;
-    
-    // Use the Inspector Property for duration
     this.segmentEndTime = Date.now() + (this.props.baseSegmentDuration * 1000);
-
-    if (this.props.debugMode) console.log(`[Scheduler] Starting Segment: ${data.segment}`);
     this.cueNextSpeaker();
   }
 
@@ -82,7 +79,7 @@ export class ShowScheduler extends Component<typeof ShowScheduler> {
       }
     }
 
-    if (this.props.debugMode) console.log(`[Scheduler] Cueing ${targetID}...`);
+    if (this.isDebug) console.log(`[Scheduler] Cueing ${targetID}...`);
 
     this.sendNetworkBroadcastEvent(CueHostEvent, {
       targetHostID: targetID,
@@ -97,11 +94,11 @@ export class ShowScheduler extends Component<typeof ShowScheduler> {
   }
 
   private handleSpeechComplete(data: { hostID: string; contentSummary: string }) {
+    if (this.isDebug) console.log(`[Scheduler] ${data.hostID} finished.`);
     if (this.memory) {
       this.memory.logBroadcast(data.hostID, data.contentSummary);
     }
 
-    // Use Inspector Property for delay
     this.async.setTimeout(() => {
       this.cueNextSpeaker();
     }, this.props.turnDelay * 1000); 
@@ -109,16 +106,14 @@ export class ShowScheduler extends Component<typeof ShowScheduler> {
 
   private finishSegment() {
     this.isSegmentActive = false;
-    if (this.props.debugMode) console.log(`[Scheduler] Segment Complete.`);
+    if (this.isDebug) console.log(`[Scheduler] Segment Complete. Requesting next...`);
     
-    // Update Memory State
     if (this.memory && this.currentCue) {
-       this.memory.saveGlobalState(this.currentCue.topicID, 0); // Advance state
+       this.memory.saveGlobalState(this.currentCue.topicID, 0); 
     }
 
-    if (this.director) {
-      this.director.planNextSegment();
-    }
+    // Loop back to Director
+    this.requestNextSegment();
   }
 }
 
