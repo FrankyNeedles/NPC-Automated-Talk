@@ -1,45 +1,43 @@
 // NarrativeToken.ts
 /**
  * NarrativeToken.ts
- * Defines the atomic units of "Reality" that the system observes.
- * This is a utility module (Type Definition + Factory Helpers).
+ * Defines atomic units of "Reality".
+ * 
+ * UPGRADE: Added 'breaking_news' type to allow world events to 
+ * inject themselves into the Broadcast flow.
  */
 
-export type NarrativeTokenType = "object_interaction" | "object_state" | "player_presence" | "system_event";
+export type NarrativeTokenType = "object_interaction" | "object_state" | "player_presence" | "breaking_news";
 
 export interface NarrativeToken {
-  id: string;               // Unique token ID
-  type: NarrativeTokenType; // Category
-  timestamp: number;        // When it happened
-  importance: number;       // 0.0 to 1.0 (Priority)
+  id: string;
+  type: NarrativeTokenType;
+  timestamp: number;
+  importance: number; // 0.0 to 1.0
   
   // -- Core Data --
-  objectId?: string;        // ID of the entity involved
-  objectLabel?: string;     // Human-readable name (e.g. "Ancient Spellbook")
-  action?: string;          // What happened? (e.g. "picked_up", "opened")
-  actor?: string;           // Player Name or ID
+  objectId?: string;
+  objectLabel?: string;
+  action?: string;
+  actor?: string;
   
-  // -- Spatial Data --
+  // -- Broadcast Data (New) --
+  headline?: string;  // If this token represents news
+  body?: string;      // The details
+  
+  // -- Spatial --
   pos?: { x: number, y: number, z: number };
   rotation?: { x: number, y: number, z: number };
-  scale?: { x: number, y: number, z: number };
   
-  // -- Context --
-  relatedObjects?: string[]; // IDs of other objects involved
-  meta?: any;                // Extra data (animation names, specific states)
+  meta?: any;
 }
 
-/**
- * Helper: Generate a unique short ID
- */
 function generateId(): string {
   return Math.random().toString(36).substr(2, 9);
 }
 
-/**
- * Factory: Create an Object Interaction Token
- * (e.g. Player grabs something)
- */
+// --- Factories ---
+
 export function makeObjectInteraction(
   objectId: string,
   objectLabel: string,
@@ -63,10 +61,6 @@ export function makeObjectInteraction(
   };
 }
 
-/**
- * Factory: Create an Object State Token
- * (e.g. An object animates or changes state on its own)
- */
 export function makeObjectState(
   objectId: string,
   objectLabel: string,
@@ -87,22 +81,21 @@ export function makeObjectState(
 }
 
 /**
- * Factory: Create a Player Presence Token
- * (e.g. Player enters the studio)
+ * Creates a "Breaking News" token.
+ * Use this when a script wants to interrupt the broadcast.
  */
-export function makePlayerPresence(
-  actor: string,
-  action: string, // e.g., "entered_zone", "left_zone"
-  importance: number = 0.3,
-  pos?: { x: number, y: number, z: number }
+export function makeBreakingNews(
+  headline: string,
+  body: string,
+  importance: number = 1.0
 ): NarrativeToken {
   return {
     id: generateId(),
-    type: "player_presence",
+    type: "breaking_news",
     timestamp: Date.now(),
-    actor,
-    action,
-    pos,
-    importance
+    headline,
+    body,
+    importance,
+    action: "broadcast_interrupt"
   };
 }

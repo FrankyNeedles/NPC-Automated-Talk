@@ -1,62 +1,38 @@
 // SmartNpcMemory.ts
-/**
- * SmartNpcMemory.ts
- * The Shared Brain for the Broadcast System.
- * 
- * Responsibilities:
- * 1. Tracks "Who Spoke Last" (Context for the next host).
- * 2. Tracks "Audience" (People in the studio).
- * 3. Tracks "Chat Questions" (For the Q&A Segment).
- * 4. Tracks "Room Vibe" (From NpcContextAgent).
- * 5. Bridges World Persistent Variables (Storyline/Schedule).
- */
-
-import { Component, PropTypes, NetworkEvent } from 'horizon/core';
+import { Component, PropTypes, NetworkEvent, Player } from 'horizon/core';
 import { NarrativeToken } from './NarrativeToken';
 
-// Internal Events
 const NarrativeTokenEvent = new NetworkEvent<any>('NarrativeTokenEvent');
 const ChatMessageEvent = new NetworkEvent<{ user: string; text: string; timestamp: number }>('ChatMessageEvent');
 
 export class SmartNpcMemory extends Component<typeof SmartNpcMemory> {
   static propsDefinition = {
     storylineVar: { type: PropTypes.String, label: "Var: Storyline", default: "Storyline" },
+    playerRoleVar: { type: PropTypes.String, label: "Var: PlayerRoles", default: "PlayerRoles" },
+    lastPromptsVar: { type: PropTypes.String, label: "Var: LastPrompts", default: "LastPrompts" },
+    npcDataVar: { type: PropTypes.String, label: "P-Var: Data", default: "Data" },
+    npcPrefsVar: { type: PropTypes.String, label: "P-Var: Prefs", default: "Prefs" },
     debugMode: { type: PropTypes.Boolean, default: false }
   };
 
-  // -- Short Term Memory (RAM) --
   private lastSpeakerID: string = "None";
   private lastSpokenContent: string = "";
-  
   private studioAudience: string[] = []; 
   private chatBuffer: { user: string; text: string }[] = []; 
   private roomEnergy: string = "Normal";
   private playerCount: number = 0;
+  private recentTopics: string[] = [];
 
-  private tokenBuffer: NarrativeToken[] = [];
+  private currentTopicID: string = "tech_slop";
+  private segmentIndex: number = 0;
 
   start() {
     this.connectNetworkBroadcastEvent(NarrativeTokenEvent, this.handleObjectToken.bind(this));
     this.connectNetworkBroadcastEvent(ChatMessageEvent, this.handleChat.bind(this));
   }
 
-  // --- Broadcast Tracking ---
+  // --- Public Methods (Fixing Console Errors) ---
 
-  public logBroadcast(hostID: string, contentSummary: string) {
-    this.lastSpeakerID = hostID;
-    this.lastSpokenContent = contentSummary;
-    if (this.props.debugMode) console.log(`[Memory] ${hostID} finished speaking.`);
-  }
-
-  public getLastSpeechContext() {
-    return {
-      speaker: this.lastSpeakerID,
-      content: this.lastSpokenContent
-    };
-  }
-
-  // --- Audience & Vibe Tracking ---
-  
   public addStudioAudience(name: string) {
     if (!this.studioAudience.includes(name)) this.studioAudience.push(name);
   }
@@ -65,8 +41,13 @@ export class SmartNpcMemory extends Component<typeof SmartNpcMemory> {
     this.studioAudience = this.studioAudience.filter(n => n !== name);
   }
 
-  public getAudienceList(): string[] {
-    return [...this.studioAudience];
+  public handlePlayerEntry(player: Player) {
+    this.addStudioAudience(player.name.get());
+    if (this.props.debugMode) console.log(`[Memory] Player entered: ${player.name.get()}`);
+  }
+
+  public handlePlayerExit(name: string) {
+    this.removeStudioAudience(name);
   }
 
   public updateRoomStats(count: number, energyLabel: string) {
@@ -74,14 +55,22 @@ export class SmartNpcMemory extends Component<typeof SmartNpcMemory> {
     this.roomEnergy = energyLabel;
   }
 
-  /**
-   * FIX: Added this method to resolve the error in StationDirector.
-   */
   public getRoomVibe(): string {
     return this.roomEnergy;
   }
 
-  // --- Chat Tracking ---
+  public getAudienceList(): string[] {
+    return [...this.studioAudience];
+  }
+
+  public getLastSpeechContext() {
+    return { speaker: this.lastSpeakerID, content: this.lastSpokenContent };
+  }
+
+  public logBroadcast(hostID: string, contentSummary: string) {
+    this.lastSpeakerID = hostID;
+    this.lastSpokenContent = contentSummary;
+  }
 
   public getLatestChatQuestion(): string {
     if (this.chatBuffer.length === 0) return "";
@@ -89,23 +78,19 @@ export class SmartNpcMemory extends Component<typeof SmartNpcMemory> {
     return `${last.user} asks: "${last.text}"`;
   }
 
-  // --- Persistence Stubs ---
-  // (These allow other scripts to call save/load without crashing, even if logic is simplified)
   public saveGlobalState(topicID: string, segmentIdx: number) {
-    // Placeholder for future persistence logic
+    this.currentTopicID = topicID;
+    this.segmentIndex = segmentIdx;
+    this.recentTopics.push(topicID);
+    if (this.recentTopics.length > 5) this.recentTopics.shift();
   }
-
-  // --- Internal Handlers ---
 
   private handleChat(data: { user: string; text: string; timestamp: number }) {
     this.chatBuffer.push(data);
     if (this.chatBuffer.length > 5) this.chatBuffer.shift();
-    if (this.props.debugMode) console.log(`[Memory] Stored Question: ${data.text}`);
   }
 
-  private handleObjectToken(payload: any) {
-    // Placeholder for object interactions
-  }
+  private handleObjectToken(payload: any) {}
 }
 
 Component.register(SmartNpcMemory);
