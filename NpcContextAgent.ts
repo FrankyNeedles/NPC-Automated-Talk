@@ -1,157 +1,109 @@
-import { Component, PropTypes, Player, CodeBlockEvents, Entity } from 'horizon/core';
+// NpcContextAgent.ts
+/**
+ * NpcContextAgent.ts
+ * The "Eyes and Ears".
+ * 1. Global: Monitors movement for "Vibe" (Chill/Chaotic).
+ * 2. Local: Monitors a Trigger Zone for "Live Audience".
+ */
+
+import { Component, PropTypes, CodeBlockEvents, Player, Entity } from 'horizon/core';
 import { SmartNpcMemory } from './SmartNpcMemory';
 
 export class NpcContextAgent extends Component<typeof NpcContextAgent> {
-    static propsDefinition = {
-        smartNpcMemory: {
-            type: PropTypes.Entity,
-            label: "Smart NPC Memory",
-            description: "Entity with SmartNpcMemory attached"
-        },
-        trigger: {
-            type: PropTypes.Entity,
-            label: "Trigger Zone",
-            description: "The trigger entity (Gizmo)"
-        },
-        reactionDelay: {
-            type: PropTypes.Number,
-            default: 0.6,
-            label: "Reaction Delay (s)"
-        },
-        enableDebug: {
-            type: PropTypes.Boolean,
-            default: true,
-            label: "Debug Logs"
-        }
-    };
+  static propsDefinition = {
+    memoryEntity: { type: PropTypes.Entity, default: null }, 
+    triggerZone: { type: PropTypes.Entity, label: "Studio Trigger (Gizmo)" }, // New Slot
+    checkInterval: { type: PropTypes.Number, default: 2.0 },
+    debugMode: { type: PropTypes.Boolean, default: false }
+  };
 
-    private memoryScript: SmartNpcMemory | undefined;
-    private playerTimers: Map<number, number> = new Map();
-    private npcSelfId: string | undefined;
+  private memory: SmartNpcMemory | undefined;
+  private activePlayers: Player[] = []; // Global list
+  
+  // Timer map for debouncing (from your snippet)
+  private playerTimers: Map<number, number> = new Map();
 
-    override start() {
-        if (!this.props.smartNpcMemory || !this.props.trigger) {
-            console.error('[NpcContextAgent] SmartNpcMemory and Trigger slots are required.');
-            return;
-        }
+  start() {
+    // 1. Find Memory
+    if (this.props.memoryEntity) {
+      const ent = this.props.memoryEntity as Entity;
+      this.memory = ent.as(SmartNpcMemory as any) as any;
+    } else {
+      this.memory = this.entity.as(SmartNpcMemory as any) as any;
+    }
 
-        // 1. Find Memory Script Safely
-        const memEntity = this.props.smartNpcMemory as Entity;
-        // Use a safe check for getComponents availability
-        if (memEntity.getComponents) {
-            const comps = memEntity.getComponents();
-            for (const c of comps) {
-                if (c instanceof SmartNpcMemory) {
-                    this.memoryScript = c;
-                    break;
-                }
-            }
-        }
+    // 2. Setup Global Vibe Check
+    this.async.setInterval(this.analyzeVibe.bind(this), this.props.checkInterval * 1000);
 
-        if (!this.memoryScript) {
-            console.error('[NpcContextAgent] SmartNpcMemory component not found on target entity.');
-            return;
-        }
-
-        // 2. Fetch NPC ID (Safety Loop)
-        // Check periodically to ensure we don't trigger on ourselves
-        this.async.setInterval(() => {
-            if (!this.npcSelfId && this.memoryScript) {
-                try {
-                    const id = this.memoryScript.getNpcId();
-                    if (id) this.npcSelfId = id;
-                } catch(e) {}
-            }
-        }, 2000);
-
-        // 3. Bind Trigger Events
+    // 3. Setup Trigger Zone (The "Listening" System)
+    if (this.props.triggerZone) {
         this.connectCodeBlockEvent(
-            this.props.trigger,
+            this.props.triggerZone,
             CodeBlockEvents.OnPlayerEnterTrigger,
-            this.onPlayerEnter.bind(this)
+            this.onAudienceEnter.bind(this)
         );
         this.connectCodeBlockEvent(
-            this.props.trigger,
+            this.props.triggerZone,
             CodeBlockEvents.OnPlayerExitTrigger,
-            this.onPlayerExit.bind(this)
+            this.onAudienceExit.bind(this)
         );
+    } else {
+        if (this.props.debugMode) console.warn("[NpcContextAgent] No Studio Trigger assigned.");
+    }
+  }
 
-        this.log("Context Agent Active.");
+  // --- STUDIO AUDIENCE LOGIC ---
+
+  private onAudienceEnter(player: Player) {
+    if (!this.memory) return;
+    
+    // Clear any exit timer if they re-entered quickly
+    if (this.playerTimers.has(player.id)) {
+        this.async.clearTimeout(this.playerTimers.get(player.id)!);
+        this.playerTimers.delete(player.id);
     }
 
-    private onPlayerEnter(player: Player): void {
-        if (!this.memoryScript) return;
+    // Tell Memory: This person is IN THE STUDIO
+    if (this.props.debugMode) console.log(`[NpcContextAgent] Audience Joined: ${player.name.get()}`);
+    this.memory.addStudioAudience(player.name.get());
+  }
 
-        // --- SAFETY CHECK ---
-        // If the object entering is the NPC itself, ignore it.
-        try {
-            if (this.npcSelfId && player.id.toString() === this.npcSelfId) return;
-        } catch { return; }
+  private onAudienceExit(player: Player) {
+    if (!this.memory) return;
 
-        const pid = player.id;
-        const pname = player.name.get();
-
-        // 1. Reset Timer (The "Good" Logic)
-        // Cancel any pending actions for this player so we can start fresh
-        this.clearPlayerTimer(pid);
-
-        // 2. Log Context (Advanced Feature)
-        let contextNote = "";
-        try {
-            if (this.memoryScript) {
-                const vState = this.memoryScript.getVortexState();
-                contextNote = `(Vortex: ${vState})`;
-            }
-        } catch(e) {}
-
-        this.log(`${pname} entered ${contextNote}. Reacting in ${this.props.reactionDelay}s...`);
-
-        // 3. Set Reaction Timer
-        const tId = this.async.setTimeout(() => {
-            if (this.memoryScript) {
-                this.memoryScript.enableHearingForPlayer(player);
-            }
-            this.playerTimers.delete(pid);
-        }, (this.props.reactionDelay || 0.6) * 1000);
-
-        this.playerTimers.set(pid, tId);
-    }
-
-    private onPlayerExit(player: Player): void {
-        if (!this.memoryScript) return;
-
-        // Safety Check
-        try {
-            if (this.npcSelfId && player.id.toString() === this.npcSelfId) return;
-        } catch { return; }
-
-        const pid = player.id;
-
-        // 1. Clear the reaction timer
-        // If they leave before the delay finishes, the NPC ignores them (Conversational filtering)
-        this.clearPlayerTimer(pid);
-
-        // 2. Notify Memory immediately
-        this.memoryScript.disableHearingForPlayer(player);
-        this.log(`${player.name.get()} exited.`);
-    }
-
-    private clearPlayerTimer(playerId: number): void {
-        const t = this.playerTimers.get(playerId);
-        if (t !== undefined) {
-            this.async.clearTimeout(t);
-            this.playerTimers.delete(playerId);
+    // Small delay before removing them (prevents flickering if they step on the line)
+    const tId = this.async.setTimeout(() => {
+        if (this.memory) {
+            if (this.props.debugMode) console.log(`[NpcContextAgent] Audience Left: ${player.name.get()}`);
+            this.memory.removeStudioAudience(player.name.get());
         }
+        this.playerTimers.delete(player.id);
+    }, 1000); // 1 second buffer
+
+    this.playerTimers.set(player.id, tId);
+  }
+
+  // --- GLOBAL VIBE LOGIC ---
+
+  private analyzeVibe() {
+    if (!this.memory) return;
+
+    const w = this.world as any;
+    const currentPlayers = (w.getPlayers ? w.getPlayers() : w.players) as Player[];
+    this.activePlayers = currentPlayers || [];
+
+    const playerCount = this.activePlayers.length;
+    let energyLabel = "Chill";
+
+    if (playerCount > 4) {
+      energyLabel = "Chaotic";
+    } else if (playerCount > 1) {
+      energyLabel = "Active";
     }
 
-    // --- EXTERNAL HOOKS (Advanced Logic) ---
-    public notifyObservedEvent(description: string) {
-        if (this.memoryScript) this.memoryScript.addEventPerception(description);
-    }
-
-    private log(msg: string) {
-        if (this.props.enableDebug) console.log(`[NpcContextAgent] ${msg}`);
-    }
+    // Update Memory with general stats
+    this.memory.updateRoomStats(playerCount, energyLabel);
+  }
 }
 
 Component.register(NpcContextAgent);
