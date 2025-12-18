@@ -1,94 +1,110 @@
 // TopicsDatabase.ts
 /**
  * TopicsDatabase.ts
- * The "AP Newswire" for the Broadcast System.
+ * The "News Wire" & Content Pool.
+ * 
+ * UPGRADE: 
+ * 1. Stories are tagged with 'validDayParts' (Morning, Prime Time, etc).
+ * 2. Added 'FILLER_POOL' for generic banter when news is slow.
  */
 
-// EXPORTED INTERFACE (Fixes StationDirector error)
+import { DayPart } from './VortexMath';
+
 export interface NewsStory {
   id: string;
   headline: string;
   category: "Politics" | "Tech" | "Sports" | "Entertainment" | "World" | "Weather" | "Health" | "Business";
   body: string;
   
-  // Pacing Data
+  // Pacing & Scheduling Data
   intensity: number; // 1 (Chill) to 10 (High Energy)
-  tags: string[];    // Keywords
+  tags: string[];
+  validDayParts: DayPart[]; // When can this run?
   
-  // AI Stage Directions
+  // Stage Directions
   hostAngle: string;
   coHostAngle: string;
 }
 
 export const NEWS_WIRE: NewsStory[] = [
+  // --- MORNING STORIES ---
   {
-    id: "tech_slop",
-    headline: "Word of the Year 2025: 'Slop'",
-    category: "Tech",
-    body: "Merriam-Webster has officially declared 'Slop' as the 2025 Word of the Year. Defined as 'untidy, messy, or low-quality material', it specifically refers to the flood of AI-generated spam clogging the internet.",
-    intensity: 7, 
-    tags: ["ai", "internet", "culture"],
-    hostAngle: "Professional but amused. Define the word clearly.",
-    coHostAngle: "Cynical/Rant. Complain about how you can't find 'real' human content anymore."
+    id: "weather_blizzard",
+    headline: "East Coast Freeze",
+    category: "Weather",
+    body: "A massive winter storm is battering the East Coast today. Power outages reported in three states. Roads are icy.",
+    intensity: 4,
+    tags: ["weather", "winter", "morning"],
+    validDayParts: [DayPart.MORNING],
+    hostAngle: "Concerned Meteorologist. Focus on safety/traffic.",
+    coHostAngle: "Cozy. Talk about coffee and staying inside."
   },
+  {
+    id: "tech_holidays",
+    headline: "Holiday Tech Shortages",
+    category: "Business",
+    body: "Supply chain reports confirm the new 'Neural-Link' haptic gloves are sold out globally. Scalpers are listing them for 300% markup.",
+    intensity: 6,
+    tags: ["tech", "shopping"],
+    validDayParts: [DayPart.MORNING, DayPart.AFTERNOON],
+    hostAngle: "Consumer Watchdog. Warn about scalpers.",
+    coHostAngle: "Frustrated. Complain about not getting a pair."
+  },
+
+  // --- PRIME TIME / HEAVY HITTERS ---
   {
     id: "pol_trump_bbc",
     headline: "Trump Files Lawsuit Against BBC",
     category: "Politics",
-    body: "Donald Trump has filed a defamation lawsuit against the BBC. The suit alleges the broadcaster unfairly edited his speech regarding the January 6th anniversary, misrepresenting his stance.",
+    body: "Donald Trump has filed a defamation lawsuit against the BBC, alleging unfair editing of his January 6th anniversary speech.",
     intensity: 9,
-    tags: ["politics", "media", "legal"],
-    hostAngle: "Neutral/Serious. Stick to the facts of the filing.",
-    coHostAngle: "Opinionated. Debate whether editing is 'fake news' or standard journalism."
+    tags: ["politics", "legal", "media"],
+    validDayParts: [DayPart.PRIME_TIME, DayPart.AFTERNOON],
+    hostAngle: "Serious/Neutral. Stick to the facts of the filing.",
+    coHostAngle: "Opinionated/Debate. Is editing 'fake news'?"
   },
   {
     id: "spt_mancity",
     headline: "Man City Dominates Palace",
     category: "Sports",
-    body: "Manchester City secured a clean 3-0 victory over Crystal Palace yesterday, keeping the pressure high on Arsenal in the title race. Haaland scored twice.",
+    body: "Manchester City secured a clean 3-0 victory over Crystal Palace yesterday. Haaland scored twice, maintaining the title race pressure.",
     intensity: 8,
-    tags: ["sports", "soccer", "uk"],
-    hostAngle: "High Energy. Play-by-play style recap.",
-    coHostAngle: "Impressed. Comment on Haaland's unstoppable form."
+    tags: ["sports", "soccer"],
+    validDayParts: [DayPart.AFTERNOON, DayPart.PRIME_TIME],
+    hostAngle: "High Energy. Play-by-play recap.",
+    coHostAngle: "Impressed. Comment on the player stats."
   },
+
+  // --- LATE NIGHT / CULTURE ---
   {
-    id: "world_chile",
-    headline: "Shift in South America: Kast Wins Chile",
-    category: "World",
-    body: "José Antonio Kast has claimed victory in the Chilean presidential election. This marks a significant shift towards the political right for the nation.",
-    intensity: 5,
-    tags: ["world", "politics", "election"],
-    hostAngle: "Formal. Discuss the geopolitical implication.",
-    coHostAngle: "Curious. Ask what this means for international relations."
-  },
-  {
-    id: "tech_holidays",
-    headline: "Holiday Tech Shortages Update",
-    category: "Business",
-    body: "Supply chain reports confirm that the new 'Neural-Link' haptic gloves are sold out globally until February 2026. Scalpers are listing them for 300% markup.",
-    intensity: 6,
-    tags: ["tech", "gaming", "shopping"],
-    hostAngle: "Consumer Watchdog. Warn viewers about scalpers.",
-    coHostAngle: "Frustrated gamer. Complain that you still haven't managed to buy a pair."
-  },
-  {
-    id: "weather_blizzard",
-    headline: "East Coast Freeze",
-    category: "Weather",
-    body: "A massive winter storm is battering the East Coast today. Power outages reported in three states. Internet traffic is at an all-time high as people stay inside.",
-    intensity: 4,
-    tags: ["weather", "winter", "usa"],
-    hostAngle: "Concerned Meteorologist. Safety warnings.",
-    coHostAngle: "Cozy. Talk about hot cocoa and gaming during a blizzard."
+    id: "tech_slop",
+    headline: "Word of the Year: 'Slop'",
+    category: "Tech",
+    body: "Merriam-Webster declared 'Slop' (low-quality AI content) as the Word of the Year 2025. It reflects the internet's current state.",
+    intensity: 7, 
+    tags: ["culture", "ai", "internet"],
+    validDayParts: [DayPart.LATE_NIGHT, DayPart.PRIME_TIME],
+    hostAngle: "Amused. Define the word.",
+    coHostAngle: "Cynical/Rant. Complain about the dead internet theory."
   },
   {
     id: "ent_bond",
-    headline: "Real Life James Bond?",
+    headline: "Real Life Spy Drama",
     category: "World",
-    body: "The head of MI6 gave a rare public speech warning of aggressive espionage threats in Europe, sounding more like a spy thriller than a briefing.",
+    body: "The head of MI6 gave a speech warning of aggressive espionage threats in Europe, sounding more like a spy thriller than a briefing.",
     intensity: 6,
-    tags: ["spies", "uk", "security"],
+    tags: ["spies", "security"],
+    validDayParts: [DayPart.LATE_NIGHT, DayPart.AFTERNOON],
     hostAngle: "Intrigued. Quote the specific warnings.",
-    coHostAngle: "Jokey. Make James Bond references or ask where the gadgets are."
+    coHostAngle: "Jokey. Make James Bond references."
   }
+];
+
+// Fallback content when no specific news matches or for State 7 (Banter)
+export const FILLER_POOL = [
+  { topic: "Coffee vs Tea", intensity: 2 },
+  { topic: "The Simulation Theory", intensity: 8 },
+  { topic: "Why do avatars not have legs?", intensity: 4 },
+  { topic: "Best Pizza Toppings", intensity: 5 },
+  { topic: "Is 2026 going to be better?", intensity: 6 }
 ];

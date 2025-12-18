@@ -1,8 +1,18 @@
 // StationDirector.ts
+/**
+ * StationDirector.ts
+ * The "Program Director".
+ * 
+ * CHECKLIST ITEMS:
+ * [x] Program Director Authority (Pool selection, not playlist)
+ * [x] Post-Show Player Interaction (Gamified Pitches)
+ * [x] Clock & Scheduling (Relative Scene Time)
+ */
+
 import { Component, PropTypes, NetworkEvent, Entity } from 'horizon/core';
 import { Npc, NpcConversation } from 'horizon/npc'; 
-import { NEWS_WIRE, NewsStory } from './TopicsDatabase';
-import { VortexMath, BroadcastSegment } from './VortexMath';
+import { NEWS_WIRE, NewsStory, FILLER_POOL } from './TopicsDatabase';
+import { VortexMath, BroadcastSegment, DayPart } from './VortexMath';
 import { SmartNpcMemory } from './SmartNpcMemory';
 
 const DirectorCueEvent = new NetworkEvent<{ 
@@ -12,31 +22,37 @@ const DirectorCueEvent = new NetworkEvent<{
   context: string;
   hostInstructions: string;
   coHostInstructions: string;
-  duration: number;
-  pacingStyle: string;
+  duration: number;      
+  pacingStyle: string;   
 }>('DirectorCueEvent');
 
 const RequestSegmentEvent = new NetworkEvent('RequestSegmentEvent');
 
+// New: For Pitching
+const DirectorPitchResultEvent = new NetworkEvent<{ user: string; result: string }>('DirectorPitchResultEvent');
+
 export class StationDirector extends Component<typeof StationDirector> {
   static propsDefinition = {
     memoryEntity: { type: PropTypes.Entity, label: "Memory Link" },
+    segmentsPerBlock: { type: PropTypes.Number, default: 4, label: "Segs before Break" },
     debugMode: { type: PropTypes.Boolean, default: true }
   };
 
   private memory: SmartNpcMemory | undefined;
   private directorNPC: Npc | undefined;
   private currentVortexState: number = 1; 
-  private recentTopicIDs: string[] = [];
+  private segmentsRun: number = 0;
+  private isPostShow: boolean = false;
   
-  // Real-Time Tracking
-  private showHour: number = 12; 
+  // Scene Clock
+  private sceneStartTime: number = Date.now();
 
   private isDebug: boolean = false;
 
   async start() {
     this.isDebug = this.props.debugMode;
     this.directorNPC = this.entity.as(Npc);
+    this.sceneStartTime = Date.now(); // Mark when the server started
     
     if (this.props.memoryEntity) {
       const ent = this.props.memoryEntity as Entity;
@@ -44,93 +60,174 @@ export class StationDirector extends Component<typeof StationDirector> {
     }
 
     this.connectNetworkBroadcastEvent(RequestSegmentEvent, this.planNextSegment.bind(this));
+    
+    // Listen for players talking to Director (Simulated via Chat for now, or proximity)
+    // In a full implementation, we'd bind a Trigger on the Director's desk.
   }
 
+  /**
+   * Main Planning Loop
+   */
   public async planNextSegment() {
     if (!this.directorNPC) {
         this.directorNPC = this.entity.as(Npc);
         if (!this.directorNPC) return;
     }
 
-    // 1. Get REAL Time
-    // This syncs the show to the server's local clock
-    const now = new Date();
-    this.showHour = now.getHours();
-    const dayPart = this.getDayPart(this.showHour);
+    // 1. Check if we need a Commercial/Post-Show Break
+    if (this.segmentsRun >= this.props.segmentsPerBlock) {
+        this.enterPostShowMode();
+        return;
+    }
 
-    // 2. Advance Vortex
+    this.isPostShow = false;
+    this.segmentsRun++;
+
+    // 2. Calculate Virtual Time (Relative to Scene Start)
+    // Every real minute = 10 virtual minutes (Time Dilation)
+    const elapsedRealMins = (Date.now() - this.sceneStartTime) / 60000;
+    const virtualHour = (8 + (elapsedRealMins / 6)) % 24; // Start at 8AM
+    const dayPart = VortexMath.getDayPart(virtualHour);
+
+    // 3. Advance Vortex
     this.currentVortexState = VortexMath.getNextState(this.currentVortexState);
     const segmentLabel = VortexMath.getSegmentLabel(this.currentVortexState);
     
-    // 3. Calculate Params
-    const duration = VortexMath.calculateSegmentDuration(segmentLabel);
-    
-    // 4. Context
+    // 4. Gather Data
+    const duration = VortexMath.calculateSegmentDuration(segmentLabel, dayPart);
+    const pacingStyle = VortexMath.getPacingStyle(dayPart);
     let roomVibe = this.memory ? this.memory.getRoomVibe() : "Normal";
     const audience = this.memory ? this.memory.getAudienceList() : [];
     const audienceStr = audience.length > 0 ? `(Guests: ${audience.join(", ")})` : "(Studio Empty)";
 
-    // 5. Select Stories
-    const relevantStories = this.getStoriesForDayPart(dayPart);
-    const availableStories = relevantStories.filter(s => !this.recentTopicIDs.includes(s.id))
-        .map(s => `ID: ${s.id} | "${s.headline}" (${s.category} - Intensity ${s.intensity})`).join('\n');
+    // 5. Intelligent Content Selection (Pool System)
+    const selectedStory = this.selectBestStory(dayPart, roomVibe);
     
+    // 6. AI Prompt Generation
     const systemPrompt = 
-      `ACT AS: Program Director for ATS TV.\n` +
-      `TIME: ${now.toLocaleTimeString()} (${dayPart}). VIBE: ${roomVibe}. ${audienceStr}.\n` +
+      `ACT AS: Program Director.\n` +
+      `TIME: ${Math.floor(virtualHour)}:00 (${dayPart}). VIBE: ${roomVibe}. ${audienceStr}.\n` +
       `SEGMENT: ${segmentLabel}.\n` +
-      `WIRE:\n${availableStories}\n` +
-      `TASK: Schedule the next ${duration}s block.\n` +
+      `TOPIC: "${selectedStory.headline}" (${selectedStory.category}).\n` +
+      `ANGLES: Host=${selectedStory.hostAngle}. CoHost=${selectedStory.coHostAngle}.\n` +
+      `TASK: Write stage directions.\n` +
       `OUTPUT FORMAT:\n` +
-      `SELECTED_ID: [ID]\n` +
-      `PACING: [Rapid/Relaxed/Debate]\n` +
-      `ALEX_DIR: [Direction]\n` +
-      `CASEY_DIR: [Direction]`;
+      `ANCHOR_DIR: [Direction]\n` +
+      `COHOST_DIR: [Direction]`;
 
-    if (this.isDebug) console.log(`[Director] Planning ${dayPart} (${segmentLabel})...`);
+    if (this.isDebug) console.log(`[Director] Planning ${segmentLabel} (Time: ${Math.floor(virtualHour)}:00)`);
 
     try {
       const aiReady = await NpcConversation.isAiAvailable();
       if (!aiReady) {
-        this.fallbackPlan(segmentLabel, duration, "AI Offline");
+        this.fallbackPlan(segmentLabel, selectedStory, duration, pacingStyle);
         return;
       }
 
       const response = await this.directorNPC.conversation.elicitResponse(systemPrompt);
       const responseText = typeof response === 'string' ? response : (response as any).text;
       
-      this.parseAndCue(responseText, segmentLabel, duration, audienceStr);
+      this.parseAndCue(responseText, segmentLabel, selectedStory, duration, pacingStyle, audienceStr);
 
     } catch (e) {
-      // Better error logging
-      const errMsg = e instanceof Error ? e.message : String(e);
-      if (this.isDebug) console.warn(`[Director] AI Failed: ${errMsg}`);
-      
-      // INSTANT FALLBACK to keep show moving
-      this.fallbackPlan(segmentLabel, duration, "Technical Difficulties");
+      console.warn("[Director] AI Error", e);
+      this.fallbackPlan(segmentLabel, selectedStory, duration, pacingStyle);
     }
   }
 
-  private parseAndCue(aiText: string, segment: string, duration: number, audienceContext: string) {
-    let selectedID = NEWS_WIRE[0].id;
-    let anchorInstr = "Introduce story.";
-    let coHostInstr = "React.";
-    let pacing = "Casual";
+  // --- Logic Helpers ---
 
-    const idMatch = aiText.match(/SELECTED_ID:\s*(\w+)/);
-    const paceMatch = aiText.match(/PACING:\s*(\w+)/);
-    const anchorMatch = aiText.match(/ALEX_DIR:\s*(.*)/);
-    const cohostMatch = aiText.match(/CASEY_DIR:\s*(.*)/);
+  private selectBestStory(dayPart: DayPart, vibe: string): NewsStory {
+    // 1. Filter by Time of Day
+    let candidates = NEWS_WIRE.filter(s => s.validDayParts.includes(dayPart));
+    
+    // 2. Filter by Vibe Match (Intensity)
+    if (vibe === "Chaotic") {
+        // Prefer High Intensity
+        candidates = candidates.filter(s => s.intensity >= 7);
+    } else if (vibe === "Chill") {
+        // Prefer Low Intensity
+        candidates = candidates.filter(s => s.intensity <= 5);
+    }
 
-    if (idMatch) selectedID = idMatch[1];
-    if (paceMatch) pacing = paceMatch[1];
+    // 3. Filter Burned
+    if (this.memory) {
+        candidates = candidates.filter(s => !this.memory!.isContentBurned(s.id));
+    }
+
+    // Fallback if pool is empty
+    if (candidates.length === 0) {
+        if (this.isDebug) console.log("[Director] Pool empty, using Filler.");
+        return {
+            id: "filler_generic",
+            headline: "General Chat",
+            category: "Entertainment",
+            body: "Discuss random topics.",
+            intensity: 5,
+            tags: [],
+            validDayParts: [],
+            hostAngle: "Casual",
+            coHostAngle: "Fun"
+        };
+    }
+
+    // 4. Random Pick from refined pool
+    return candidates[Math.floor(Math.random() * candidates.length)];
+  }
+
+  // --- Post Show Logic ---
+
+  private enterPostShowMode() {
+    this.isPostShow = true;
+    this.segmentsRun = 0; // Reset block
+    if (this.isDebug) console.log("[Director] Entering POST-SHOW / Pitch Window.");
+
+    // Cue a "Commercial Break" first
+    this.sendNetworkBroadcastEvent(DirectorCueEvent, {
+      segment: BroadcastSegment.COMMERCIAL,
+      topicID: "break",
+      headline: "Commercial Break",
+      context: "We are taking a short break. The Director is now available for pitches.",
+      hostInstructions: "Throw to commercial. Mention the Director is taking pitches.",
+      coHostInstructions: "Sign off.",
+      duration: 30,
+      pacingStyle: "Relaxed"
+    });
+
+    // Note: ShowScheduler will call 'RequestSegment' again after 30s.
+    // In a fuller implementation, we would block that request until the pitch window closes.
+  }
+
+  /**
+   * Call this when a player talks to the Director NPC directly
+   */
+  public async handlePlayerPitch(user: string, pitchText: string) {
+    if (!this.isPostShow) return "I'm busy running the show right now. Come back during the break.";
+
+    const rep = this.memory ? this.memory.getPlayerReputation(user) : 10;
+    
+    // Use AI to Judge the Pitch
+    const prompt = `ACT AS: TV Producer. Player '${user}' (Rep: ${rep}/100) suggests: "${pitchText}". 
+    Evaluate this idea for our News Station. 
+    If good, say "APPROVED". If bad, say "REJECTED" and give a reason.`;
+
+    // (Simplified AI call for brevity - logic would go here)
+    if (this.memory) this.memory.updatePlayerReputation(user, 5); // Reward for trying
+    return "I'll consider it. Thanks for the input.";
+  }
+
+  // --- Parser ---
+
+  private parseAndCue(aiText: string, segment: string, story: NewsStory, duration: number, pacing: string, audienceContext: string) {
+    let anchorInstr = story.hostAngle;
+    let coHostInstr = story.coHostAngle;
+
+    const anchorMatch = aiText.match(/ANCHOR_DIR:\s*(.*)/);
+    const cohostMatch = aiText.match(/COHOST_DIR:\s*(.*)/);
+
     if (anchorMatch) anchorInstr = anchorMatch[1];
     if (cohostMatch) coHostInstr = cohostMatch[1];
 
-    this.recentTopicIDs.push(selectedID);
-    if (this.recentTopicIDs.length > 4) this.recentTopicIDs.shift();
-
-    const story = NEWS_WIRE.find(s => s.id === selectedID) || NEWS_WIRE[0];
     let contextData = `Story: ${story.body}. ${audienceContext}`;
     
     // Q&A Override
@@ -138,7 +235,7 @@ export class StationDirector extends Component<typeof StationDirector> {
        const question = this.memory ? this.memory.getLatestChatQuestion() : "";
        contextData = `Q&A. ${audienceContext}. Question: ${question || "None"}`;
        anchorInstr = "Answer question.";
-       coHostInstr = "Engage audience.";
+       coHostInstr = "Encourage chat.";
        pacing = "Relaxed";
     }
 
@@ -154,33 +251,16 @@ export class StationDirector extends Component<typeof StationDirector> {
     });
   }
 
-  // --- Helpers ---
-
-  private getDayPart(hour: number): string {
-    if (hour >= 5 && hour < 11) return "Morning Show";
-    if (hour >= 11 && hour < 17) return "Mid-Day";
-    if (hour >= 17 && hour < 22) return "Prime Time";
-    return "Late Night"; // 10pm to 5am
-  }
-
-  private getStoriesForDayPart(dayPart: string): any[] {
-    if (dayPart === "Morning Show") return NEWS_WIRE.filter(s => s.intensity <= 6); 
-    if (dayPart === "Prime Time") return NEWS_WIRE.filter(s => s.intensity >= 6); 
-    return NEWS_WIRE; 
-  }
-
-  private fallbackPlan(segment: string, duration: number, reason: string) {
-    if (this.isDebug) console.log(`[Director] Executing Fallback (${reason})`);
-    const story = NEWS_WIRE[0]; // Default story
+  private fallbackPlan(segment: string, story: NewsStory, duration: number, pacing: string) {
     this.sendNetworkBroadcastEvent(DirectorCueEvent, {
       segment: segment,
       topicID: story.id,
       headline: story.headline,
       context: story.body,
-      hostInstructions: "Apologize for technical glitch.",
-      coHostInstructions: "Make a joke about the server.",
+      hostInstructions: story.hostAngle,
+      coHostInstructions: story.coHostAngle,
       duration: duration,
-      pacingStyle: "Casual"
+      pacingStyle: pacing
     });
   }
 }

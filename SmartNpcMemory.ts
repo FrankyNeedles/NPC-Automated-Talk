@@ -1,9 +1,11 @@
 // SmartNpcMemory.ts
 /**
  * SmartNpcMemory.ts
- * The Shared Brain.
+ * The Shared Brain & Persistence Layer.
  * 
- * FIX: Cached 'debugMode' to avoid runtime errors during external calls.
+ * CHECKLIST ITEMS:
+ * [x] Memory & Continuity (Stores reputation, pitches, history)
+ * [x] Crash Fix (Safe access to props)
  */
 
 import { Component, PropTypes, NetworkEvent, Player } from 'horizon/core';
@@ -17,34 +19,110 @@ export class SmartNpcMemory extends Component<typeof SmartNpcMemory> {
     storylineVar: { type: PropTypes.String, label: "Var: Storyline", default: "Storyline" },
     playerRoleVar: { type: PropTypes.String, label: "Var: PlayerRoles", default: "PlayerRoles" },
     lastPromptsVar: { type: PropTypes.String, label: "Var: LastPrompts", default: "LastPrompts" },
-    npcDataVar: { type: PropTypes.String, label: "P-Var: Data", default: "Data" },
-    npcPrefsVar: { type: PropTypes.String, label: "P-Var: Prefs", default: "Prefs" },
     debugMode: { type: PropTypes.Boolean, default: false }
   };
 
+  // RAM - Broadcast State
   private lastSpeakerID: string = "None";
   private lastSpokenContent: string = "";
   private studioAudience: string[] = []; 
   private chatBuffer: { user: string; text: string }[] = []; 
   private roomEnergy: string = "Normal";
   private playerCount: number = 0;
-  private recentTopics: string[] = [];
 
-  private currentTopicID: string = "tech_slop";
-  private segmentIndex: number = 0;
+  // RAM - Persistence Cache
+  private usedTopicIDs: string[] = []; 
+  
+  // NEW: Gamification Data
+  private playerReputation: Map<string, number> = new Map(); // Name -> Score (0-100)
+  private showPitches: { user: string; pitch: string; score: number }[] = [];
 
-  // FIX: Local Cache
   private isDebug: boolean = false;
 
   start() {
-    // FIX: Cache the prop immediately
     this.isDebug = this.props.debugMode;
-
     this.connectNetworkBroadcastEvent(NarrativeTokenEvent, this.handleObjectToken.bind(this));
     this.connectNetworkBroadcastEvent(ChatMessageEvent, this.handleChat.bind(this));
   }
 
-  // --- Public Methods (Safe for External Calls) ---
+  // --- Safe Debug Helper ---
+  private log(msg: string) {
+    // Safety check in case props aren't ready
+    const debug = this.props ? this.props.debugMode : false;
+    if (debug) console.log(`[Memory] ${msg}`);
+  }
+
+  // --- Persistence / Content Management ---
+
+  public isContentBurned(topicID: string): boolean {
+    return this.usedTopicIDs.includes(topicID);
+  }
+
+  public markContentAsUsed(topicID: string) {
+    if (topicID === "generic" || topicID.startsWith("filler")) return;
+    this.usedTopicIDs.push(topicID);
+    if (this.usedTopicIDs.length > 8) this.usedTopicIDs.shift();
+    this.log(`Burned Topic: ${topicID}`);
+  }
+
+  public saveGlobalState(topicID: string, segmentIdx: number) {
+    this.markContentAsUsed(topicID);
+  }
+
+  // --- Player Data & Gamification ---
+
+  public handlePlayerEntry(player: Player) {
+    const name = player.name.get();
+    this.addStudioAudience(name);
+    
+    // Initialize Reputation if new
+    if (!this.playerReputation.has(name)) {
+        this.playerReputation.set(name, 10); // Start with neutral rep
+    }
+    
+    this.log(`Player entered: ${name} (Rep: ${this.playerReputation.get(name)})`);
+  }
+
+  public handlePlayerExit(name: string) {
+    this.removeStudioAudience(name);
+  }
+
+  public getPlayerReputation(name: string): number {
+    return this.playerReputation.get(name) || 10;
+  }
+
+  public updatePlayerReputation(name: string, delta: number) {
+    const current = this.getPlayerReputation(name);
+    const newVal = Math.max(0, Math.min(100, current + delta));
+    this.playerReputation.set(name, newVal);
+    this.log(`Updated Rep for ${name}: ${newVal}`);
+  }
+
+  public submitPitch(user: string, pitchText: string) {
+    this.showPitches.push({ user, pitch: pitchText, score: 0 });
+    this.log(`Pitch Received from ${user}`);
+  }
+
+  public getPendingPitches() {
+    return [...this.showPitches];
+  }
+
+  public clearPitches() {
+    this.showPitches = [];
+  }
+
+  // --- Broadcast Context API ---
+
+  public logBroadcast(hostID: string, contentSummary: string) {
+    this.lastSpeakerID = hostID;
+    this.lastSpokenContent = contentSummary;
+  }
+
+  public getLastSpeechContext() {
+    return { speaker: this.lastSpeakerID, content: this.lastSpokenContent };
+  }
+
+  // --- Audience / Vibe API ---
 
   public addStudioAudience(name: string) {
     if (!this.studioAudience.includes(name)) this.studioAudience.push(name);
@@ -54,14 +132,8 @@ export class SmartNpcMemory extends Component<typeof SmartNpcMemory> {
     this.studioAudience = this.studioAudience.filter(n => n !== name);
   }
 
-  public handlePlayerEntry(player: Player) {
-    this.addStudioAudience(player.name.get());
-    // FIX: Use cached isDebug
-    if (this.isDebug) console.log(`[Memory] Player entered: ${player.name.get()}`);
-  }
-
-  public handlePlayerExit(name: string) {
-    this.removeStudioAudience(name);
+  public getAudienceList(): string[] {
+    return [...this.studioAudience];
   }
 
   public updateRoomStats(count: number, energyLabel: string) {
@@ -73,32 +145,12 @@ export class SmartNpcMemory extends Component<typeof SmartNpcMemory> {
     return this.roomEnergy;
   }
 
-  public getAudienceList(): string[] {
-    return [...this.studioAudience];
-  }
-
-  public getLastSpeechContext() {
-    return { speaker: this.lastSpeakerID, content: this.lastSpokenContent };
-  }
-
-  public logBroadcast(hostID: string, contentSummary: string) {
-    this.lastSpeakerID = hostID;
-    this.lastSpokenContent = contentSummary;
-    // FIX: Use cached isDebug
-    if (this.isDebug) console.log(`[Memory] ${hostID} finished speaking.`);
-  }
+  // --- Chat API ---
 
   public getLatestChatQuestion(): string {
     if (this.chatBuffer.length === 0) return "";
     const last = this.chatBuffer[this.chatBuffer.length - 1];
     return `${last.user} asks: "${last.text}"`;
-  }
-
-  public saveGlobalState(topicID: string, segmentIdx: number) {
-    this.currentTopicID = topicID;
-    this.segmentIndex = segmentIdx;
-    this.recentTopics.push(topicID);
-    if (this.recentTopics.length > 5) this.recentTopics.shift();
   }
 
   private handleChat(data: { user: string; text: string; timestamp: number }) {

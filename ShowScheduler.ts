@@ -3,8 +3,9 @@
  * ShowScheduler.ts
  * The "Floor Manager".
  * 
- * UPDATE: Removed manual timing slots. 
- * Now obeys the Director's 'duration' and 'pacingStyle'.
+ * CHECKLIST ITEMS:
+ * [x] Soft Jitter (Natural gaps)
+ * [x] Explicit Speaker Availability Tracking
  */
 
 import { Component, PropTypes, NetworkEvent, Entity } from 'horizon/core';
@@ -27,16 +28,18 @@ export class ShowScheduler extends Component<typeof ShowScheduler> {
   private isSegmentActive: boolean = false;
   private segmentEndTime: number = 0;
   private isDebug: boolean = false;
+  
   private currentTurnDelay: number = 1.5;
 
-  // Pre-Fetch
   private currentCue: any = null; 
   private nextCue: any = null;    
   private isFetching: boolean = false;
 
+  // Speaker Availability Map
+  private hostBusy: Map<string, boolean> = new Map();
+
   start() {
     this.isDebug = this.props.debugMode;
-
     if (this.props.memoryEntity) {
       const ent = this.props.memoryEntity as Entity;
       this.memory = ent.as(SmartNpcMemory as any) as any;
@@ -44,6 +47,10 @@ export class ShowScheduler extends Component<typeof ShowScheduler> {
 
     this.connectNetworkBroadcastEvent(DirectorCueEvent, this.handleDirectorResponse.bind(this));
     this.connectNetworkBroadcastEvent(HostSpeechCompleteEvent, this.handleSpeechComplete.bind(this));
+
+    // Initialize Host State
+    this.hostBusy.set("HostA", false);
+    this.hostBusy.set("HostB", false);
 
     this.async.setTimeout(() => {
         this.requestNextSegment();
@@ -73,16 +80,18 @@ export class ShowScheduler extends Component<typeof ShowScheduler> {
     this.currentTurn = 0;
     this.isSegmentActive = true;
     
-    // 1. USE DYNAMIC DURATION
-    this.segmentEndTime = Date.now() + (cueData.duration * 1000);
+    // Set End Time
+    const duration = cueData.duration || 60;
+    this.segmentEndTime = Date.now() + (duration * 1000);
 
-    // 2. ADJUST PACING (Turn Delay)
-    // Rapid = Fast arguments (0.5s gap). Relaxed = Slow (2.5s gap).
-    if (cueData.pacingStyle === "Rapid") this.currentTurnDelay = 0.5;
-    else if (cueData.pacingStyle === "Debate") this.currentTurnDelay = 1.0;
-    else this.currentTurnDelay = 2.0;
+    // Set Base Pacing
+    const style = cueData.pacingStyle || "Casual";
+    if (style === "Rapid") this.currentTurnDelay = 0.5;
+    else if (style === "Debate") this.currentTurnDelay = 1.0;
+    else if (style === "Relaxed") this.currentTurnDelay = 2.0;
+    else this.currentTurnDelay = 1.5;
 
-    if (this.isDebug) console.log(`[Scheduler] LIVE: ${cueData.segment} (${cueData.duration}s) | Style: ${cueData.pacingStyle}`);
+    if (this.isDebug) console.log(`[Scheduler] LIVE: ${cueData.segment} | Style: ${style}`);
     
     if (this.memory) {
        this.memory.saveGlobalState(cueData.topicID, 0); 
@@ -90,10 +99,10 @@ export class ShowScheduler extends Component<typeof ShowScheduler> {
 
     this.cueNextSpeaker();
 
-    // Start pre-fetch halfway through (safe bet)
+    // Buffer next
     this.async.setTimeout(() => {
         this.requestNextSegment();
-    }, (cueData.duration / 2) * 1000);
+    }, (duration / 2) * 1000);
   }
 
   private cueNextSpeaker() {
@@ -107,6 +116,15 @@ export class ShowScheduler extends Component<typeof ShowScheduler> {
     const isHostA = (this.currentTurn % 2 === 0);
     const targetID = isHostA ? "HostA" : "HostB";
     const role = isHostA ? "Anchor" : "CoHost";
+    
+    // Check Availability
+    if (this.hostBusy.get(targetID)) {
+        if (this.isDebug) console.warn(`[Scheduler] ${targetID} is busy! Waiting...`);
+        // Retry shortly
+        this.async.setTimeout(() => this.cueNextSpeaker(), 500);
+        return;
+    }
+
     const instructions = isHostA ? this.currentCue.hostInstructions : this.currentCue.coHostInstructions;
 
     let lastContext = "";
@@ -117,8 +135,10 @@ export class ShowScheduler extends Component<typeof ShowScheduler> {
       }
     }
 
-    // Pass the pacing style to the Host too (optional, but good for context)
-    const pacingNote = `Pacing: ${this.currentCue.pacingStyle}.`;
+    const pacingNote = `Pacing: ${this.currentCue.pacingStyle || "Casual"}.`;
+
+    // Mark Busy
+    this.hostBusy.set(targetID, true);
 
     this.sendNetworkBroadcastEvent(CueHostEvent, {
       targetHostID: targetID,
@@ -137,10 +157,16 @@ export class ShowScheduler extends Component<typeof ShowScheduler> {
       this.memory.logBroadcast(data.hostID, data.contentSummary);
     }
 
-    // Dynamic Delay
+    // Mark Free
+    this.hostBusy.set(data.hostID, false);
+
+    // SOFT JITTER: Add random 200ms-800ms variance to the base delay
+    const jitter = 0.2 + (Math.random() * 0.6);
+    const totalDelay = this.currentTurnDelay + jitter;
+
     this.async.setTimeout(() => {
       this.cueNextSpeaker();
-    }, this.currentTurnDelay * 1000); 
+    }, totalDelay * 1000); 
   }
 
   private finishSegment() {

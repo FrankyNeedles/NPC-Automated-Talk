@@ -1,2 +1,3 @@
 .backups/
-.operations.log
+.operations.lognode
+node_modules
