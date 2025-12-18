@@ -1,12 +1,11 @@
 // AutomatedHost.ts
 /**
  * AutomatedHost.ts
- * The "Talent" (NPC Actor).
+ * The "Talent".
  * 
- * FINAL UPGRADE: 
- * 1. Self-identifies as "Alex" (HostA) or "Casey" (HostB).
- * 2. Reads 'Pacing Style' to adjust speech duration timers dynamically.
- * 3. Prevents overlap with a robust word-count estimator.
+ * CRITICAL FIX: "Context Weighting"
+ * - Fixed the math so hosts don't wait 40 seconds to say "Wow."
+ * - Treats Context as reference material (20% weight) vs Script (100% weight).
  */
 
 import { Component, PropTypes, NetworkEvent } from 'horizon/core';
@@ -17,9 +16,13 @@ const HostSpeechCompleteEvent = new NetworkEvent<{ hostID: string; contentSummar
 
 export class AutomatedHost extends Component<typeof AutomatedHost> {
   static propsDefinition = {
-    hostID: { type: PropTypes.String, default: "HostA", label: "Host ID (HostA/HostB)" },
-    minSpeechDuration: { type: PropTypes.Number, default: 4, label: "Min Floor (s)" },
-    padding: { type: PropTypes.Number, default: 2.5, label: "Safety Gap (s)" }, 
+    hostID: { type: PropTypes.String, default: "HostA", label: "System ID (HostA/HostB)" },
+    displayName: { type: PropTypes.String, default: "Host", label: "My Name" },
+    partnerName: { type: PropTypes.String, default: "Co-Host", label: "Partner Name" },
+    roleDescription: { type: PropTypes.String, default: "TV Anchor", label: "Role Desc" },
+    
+    minSpeechDuration: { type: PropTypes.Number, default: 3, label: "Min Floor (s)" },
+    padding: { type: PropTypes.Number, default: 1.0, label: "Breath Gap (s)" }, 
     debugMode: { type: PropTypes.Boolean, default: false }
   };
 
@@ -32,67 +35,61 @@ export class AutomatedHost extends Component<typeof AutomatedHost> {
   }
 
   private async handleCue(data: any) {
-    // 1. Check ID
     if (data.targetHostID !== this.props.hostID) return;
     if (!this.npc) return;
 
     this.isBusy = true;
 
-    // 2. Resolve Identities
-    const myName = this.props.hostID === "HostA" ? "Alex (Lead Anchor)" : "Casey (Co-Host)";
-    const otherName = this.props.hostID === "HostA" ? "Casey" : "Alex";
+    const myName = this.props.displayName;
+    const otherName = this.props.partnerName;
+    const myRole = this.props.roleDescription;
 
-    // 3. Build the Performance Prompt
     const systemPrompt = 
-      `ROLE: You are ${myName} for ATS News.\n` +
+      `ROLE: You are ${myName}, the ${myRole}.\n` +
       `TOPIC: ${data.topic}\n` +
       `CONTEXT: ${data.context}\n` +
+      `YOUR STANCE: "${data.stance}"\n` +
       `PREVIOUSLY: ${otherName} said: "${data.lastSpeakerContext}"\n` +
       `INSTRUCTIONS: ${data.instructions}\n` +
-      `CONSTRAINTS: Speak naturally to ${otherName}. Do not repeat them; react to them. Broadcast quality grammar.\n` +
+      `CONSTRAINTS: Speak naturally to ${otherName}. Defend your stance.\n` +
       `OUTPUT: Spoken dialogue only.`;
 
-    if (this.props.debugMode) console.log(`[${this.props.hostID}] Speaking as ${myName}...`);
+    if (this.props.debugMode) console.log(`[${this.props.hostID}] Speaking as ${myName}`);
 
-    // 4. Speak
     try {
       const aiAvailable = await NpcConversation.isAiAvailable();
       if (aiAvailable) {
         this.npc.conversation.elicitResponse(systemPrompt);
       } else {
-        this.npc.conversation.speak(`[AI Offline] Moving on to ${data.topic}.`);
+        this.npc.conversation.speak(`[AI Offline] ${data.topic}`);
       }
     } catch (e) {
       console.warn("AI Error", e);
     }
 
-    // 5. SMART TIMING ENGINE
-    // We calculate how long to wait based on the Pacing Style.
-    // "Rapid" = We assume they talk fast (180 WPM).
-    // "Relaxed" = We assume they talk slow (110 WPM).
-    
-    let wpm = 140; // Casual Default
-    if (data.instructions.includes("Rapid")) wpm = 180;
-    if (data.instructions.includes("Debate")) wpm = 160;
-    if (data.instructions.includes("Relaxed")) wpm = 110;
+    // --- NEW TIMING MATH ---
+    let wpm = 140; 
+    let maxCap = 15; // Standard max wait
 
-    // Estimate Word Count (Chars / 5)
-    const contextLength = data.context.length + data.instructions.length;
-    const estimatedWords = contextLength / 5;
+    if (data.pacingStyle === "Rapid") { wpm = 170; maxCap = 10; }
+    if (data.pacingStyle === "Debate") { wpm = 150; maxCap = 20; }
+    if (data.pacingStyle === "Relaxed") { wpm = 110; maxCap = 25; }
+
+    // Weighted Calculation:
+    // Context is background info (count 15%). 
+    // Instructions/Stance are the script (count 100%).
+    const weightedLength = (data.context.length * 0.15) + (data.instructions.length) + (data.stance.length * 1.5);
     
-    // Calculate Seconds
+    const estimatedWords = weightedLength / 5;
     const estimatedSeconds = (estimatedWords / wpm) * 60;
     
-    // Clamp limits (Don't wait 40 seconds for a short cue, don't cut off at 2 seconds)
-    const clampedSeconds = Math.min(Math.max(estimatedSeconds, this.props.minSpeechDuration), 20);
-    
-    const finalDuration = clampedSeconds + this.props.padding;
+    // Clamp result
+    const finalDuration = Math.min(Math.max(estimatedSeconds, this.props.minSpeechDuration), maxCap) + this.props.padding;
 
     if (this.props.debugMode) {
-      console.log(`[${this.props.hostID}] Timing: ${finalDuration.toFixed(1)}s (Style: ${wpm} wpm)`);
+      console.log(`[${this.props.hostID}] Timing: ${finalDuration.toFixed(1)}s (Cap: ${maxCap})`);
     }
 
-    // 6. Wait & Signal Done
     this.async.setTimeout(() => {
       this.finishSpeaking(data.topic);
     }, finalDuration * 1000);

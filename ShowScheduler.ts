@@ -3,9 +3,7 @@
  * ShowScheduler.ts
  * The "Floor Manager".
  * 
- * CHECKLIST ITEMS:
- * [x] Soft Jitter (Natural gaps)
- * [x] Explicit Speaker Availability Tracking
+ * UPDATE: Increased Watchdog timer to 45s to prevent false positives.
  */
 
 import { Component, PropTypes, NetworkEvent, Entity } from 'horizon/core';
@@ -29,13 +27,13 @@ export class ShowScheduler extends Component<typeof ShowScheduler> {
   private segmentEndTime: number = 0;
   private isDebug: boolean = false;
   
-  private currentTurnDelay: number = 1.5;
-
+  private currentTurnDelay: number = 1.0;
   private currentCue: any = null; 
   private nextCue: any = null;    
   private isFetching: boolean = false;
+  private watchdogTimer: any = null;
 
-  // Speaker Availability Map
+  // Speaker Availability
   private hostBusy: Map<string, boolean> = new Map();
 
   start() {
@@ -48,7 +46,6 @@ export class ShowScheduler extends Component<typeof ShowScheduler> {
     this.connectNetworkBroadcastEvent(DirectorCueEvent, this.handleDirectorResponse.bind(this));
     this.connectNetworkBroadcastEvent(HostSpeechCompleteEvent, this.handleSpeechComplete.bind(this));
 
-    // Initialize Host State
     this.hostBusy.set("HostA", false);
     this.hostBusy.set("HostB", false);
 
@@ -80,16 +77,14 @@ export class ShowScheduler extends Component<typeof ShowScheduler> {
     this.currentTurn = 0;
     this.isSegmentActive = true;
     
-    // Set End Time
     const duration = cueData.duration || 60;
     this.segmentEndTime = Date.now() + (duration * 1000);
 
-    // Set Base Pacing
     const style = cueData.pacingStyle || "Casual";
-    if (style === "Rapid") this.currentTurnDelay = 0.5;
-    else if (style === "Debate") this.currentTurnDelay = 1.0;
-    else if (style === "Relaxed") this.currentTurnDelay = 2.0;
-    else this.currentTurnDelay = 1.5;
+    if (style === "Rapid") this.currentTurnDelay = 0.3;
+    else if (style === "Debate") this.currentTurnDelay = 0.8; 
+    else if (style === "Relaxed") this.currentTurnDelay = 1.5; 
+    else this.currentTurnDelay = 1.0;
 
     if (this.isDebug) console.log(`[Scheduler] LIVE: ${cueData.segment} | Style: ${style}`);
     
@@ -99,7 +94,6 @@ export class ShowScheduler extends Component<typeof ShowScheduler> {
 
     this.cueNextSpeaker();
 
-    // Buffer next
     this.async.setTimeout(() => {
         this.requestNextSegment();
     }, (duration / 2) * 1000);
@@ -113,19 +107,18 @@ export class ShowScheduler extends Component<typeof ShowScheduler> {
       return;
     }
 
+    if (this.watchdogTimer) this.async.clearTimeout(this.watchdogTimer);
+
     const isHostA = (this.currentTurn % 2 === 0);
     const targetID = isHostA ? "HostA" : "HostB";
     const role = isHostA ? "Anchor" : "CoHost";
     
-    // Check Availability
     if (this.hostBusy.get(targetID)) {
-        if (this.isDebug) console.warn(`[Scheduler] ${targetID} is busy! Waiting...`);
-        // Retry shortly
         this.async.setTimeout(() => this.cueNextSpeaker(), 500);
         return;
     }
 
-    const instructions = isHostA ? this.currentCue.hostInstructions : this.currentCue.coHostInstructions;
+    const myStance = isHostA ? this.currentCue.hostStance : this.currentCue.coHostStance;
 
     let lastContext = "";
     if (this.memory) {
@@ -137,7 +130,6 @@ export class ShowScheduler extends Component<typeof ShowScheduler> {
 
     const pacingNote = `Pacing: ${this.currentCue.pacingStyle || "Casual"}.`;
 
-    // Mark Busy
     this.hostBusy.set(targetID, true);
 
     this.sendNetworkBroadcastEvent(CueHostEvent, {
@@ -145,22 +137,33 @@ export class ShowScheduler extends Component<typeof ShowScheduler> {
       role: role,
       topic: this.currentCue.headline,
       context: this.currentCue.context,
-      instructions: `${instructions} ${pacingNote}`,
-      lastSpeakerContext: lastContext
+      stance: myStance,
+      lastSpeakerContext: lastContext,
+      pacingStyle: this.currentCue.pacingStyle, // Pass Raw Style
+      instructions: `${isHostA ? this.currentCue.hostInstructions : this.currentCue.coHostInstructions}. ${pacingNote}`
     });
 
     this.currentTurn++;
+
+    // RELAXED WATCHDOG: 45 Seconds
+    this.watchdogTimer = this.async.setTimeout(() => {
+        console.warn(`[Scheduler] Watchdog: ${targetID} timed out! Forcing next turn.`);
+        this.hostBusy.set(targetID, false); // Force free
+        this.cueNextSpeaker();
+    }, 45000);
   }
 
   private handleSpeechComplete(data: { hostID: string; contentSummary: string }) {
+    if (this.watchdogTimer) {
+        this.async.clearTimeout(this.watchdogTimer);
+        this.watchdogTimer = null;
+    }
+
     if (this.memory) {
       this.memory.logBroadcast(data.hostID, data.contentSummary);
     }
-
-    // Mark Free
     this.hostBusy.set(data.hostID, false);
 
-    // SOFT JITTER: Add random 200ms-800ms variance to the base delay
     const jitter = 0.2 + (Math.random() * 0.6);
     const totalDelay = this.currentTurnDelay + jitter;
 
