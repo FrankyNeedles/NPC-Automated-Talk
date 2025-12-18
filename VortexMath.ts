@@ -2,20 +2,23 @@
 /**
  * VortexMath.ts
  * The "Master Clock" and Pacing Engine.
+ * Responsibilities:
+ * - Calculates Day Part (Morning/PrimeTime).
+ * - Maps Vortex States to Broadcast Segments.
+ * - Determines Segment Duration based on energy.
  */
 
 export const VORTEX_CYCLE = [1, 2, 4, 8, 7, 5];
 
 export enum BroadcastSegment {
-  STATION_ID = "STATION_ID",
-  HEADLINES = "HEADLINES",
-  AUDIENCE = "AUDIENCE_Q_A",
-  DEEP_DIVE = "DEEP_DIVE",
-  BANTER = "BANTER",
-  COMMERCIAL = "COMMERCIAL"
+  STATION_ID = "STATION_ID",     // 1: Quick Intro (30s)
+  HEADLINES = "HEADLINES",       // 2: Fast Paced (60s)
+  AUDIENCE = "AUDIENCE_Q_A",     // 4: Interaction (90s)
+  DEEP_DIVE = "DEEP_DIVE",       // 8: The Main Event (180s)
+  BANTER = "BANTER",             // 7: Color Commentary (60s)
+  COMMERCIAL = "COMMERCIAL"      // 5: Reset/Pitches (Variable)
 }
 
-// MAKE SURE THIS IS EXPORTED
 export enum DayPart {
   MORNING = "Morning Show",
   AFTERNOON = "Mid-Day Block",
@@ -43,6 +46,9 @@ export const VortexMath = {
     }
   },
 
+  /**
+   * Calculates duration based on Segment Type + Day Part.
+   */
   calculateSegmentDuration(segment: BroadcastSegment, dayPart: DayPart): number {
     let base = 60;
     switch (segment) {
@@ -51,13 +57,17 @@ export const VortexMath = {
       case BroadcastSegment.AUDIENCE: base = 90; break;
       case BroadcastSegment.DEEP_DIVE: base = 180; break;
       case BroadcastSegment.BANTER: base = 60; break;
-      case BroadcastSegment.COMMERCIAL: base = 20; break;
+      case BroadcastSegment.COMMERCIAL: base = 30; break;
     }
+    // Morning is faster, Prime Time is longer
     if (dayPart === DayPart.MORNING) return base * 0.8; 
     if (dayPart === DayPart.PRIME_TIME) return base * 1.2; 
     return base;
   },
 
+  /**
+   * Defines how hosts should speak based on time of day.
+   */
   getPacingStyle(dayPart: DayPart): string {
     switch (dayPart) {
       case DayPart.MORNING: return "Rapid";

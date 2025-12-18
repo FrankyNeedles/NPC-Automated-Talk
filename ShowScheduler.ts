@@ -3,7 +3,10 @@
  * ShowScheduler.ts
  * The "Floor Manager".
  * 
- * UPDATE: Increased Watchdog timer to 45s to prevent false positives.
+ * RESPONSIBILITIES:
+ * 1. Executes the Director's Plan.
+ * 2. Enforces strict turn-taking (No overlap).
+ * 3. Manages Pre-Fetching to ensure zero dead air.
  */
 
 import { Component, PropTypes, NetworkEvent, Entity } from 'horizon/core';
@@ -26,15 +29,12 @@ export class ShowScheduler extends Component<typeof ShowScheduler> {
   private isSegmentActive: boolean = false;
   private segmentEndTime: number = 0;
   private isDebug: boolean = false;
-  
   private currentTurnDelay: number = 1.0;
+
   private currentCue: any = null; 
   private nextCue: any = null;    
-  private isFetching: boolean = false;
-  private watchdogTimer: any = null;
-
-  // Speaker Availability
   private hostBusy: Map<string, boolean> = new Map();
+  private watchdogTimer: any = null;
 
   start() {
     this.isDebug = this.props.debugMode;
@@ -45,24 +45,21 @@ export class ShowScheduler extends Component<typeof ShowScheduler> {
 
     this.connectNetworkBroadcastEvent(DirectorCueEvent, this.handleDirectorResponse.bind(this));
     this.connectNetworkBroadcastEvent(HostSpeechCompleteEvent, this.handleSpeechComplete.bind(this));
-
     this.hostBusy.set("HostA", false);
     this.hostBusy.set("HostB", false);
 
+    // Initial Kickoff
     this.async.setTimeout(() => {
         this.requestNextSegment();
     }, 5000);
   }
 
   private requestNextSegment() {
-      if (this.isFetching) return;
-      this.isFetching = true;
       if (this.isDebug) console.log("[Scheduler] Requesting Director Plan...");
       this.sendNetworkBroadcastEvent(RequestSegmentEvent, {});
   }
 
   private handleDirectorResponse(data: any) {
-    this.isFetching = false;
     if (!this.isSegmentActive) {
         this.startSegment(data);
     } else {
@@ -88,9 +85,8 @@ export class ShowScheduler extends Component<typeof ShowScheduler> {
 
     if (this.isDebug) console.log(`[Scheduler] LIVE: ${cueData.segment} | Style: ${style}`);
     
-    if (this.memory) {
-       this.memory.saveGlobalState(cueData.topicID, 0); 
-    }
+    // ERROR FIX: Removed the second argument '0'
+    if (this.memory) this.memory.saveGlobalState(cueData.topicID); 
 
     this.cueNextSpeaker();
 
@@ -113,13 +109,13 @@ export class ShowScheduler extends Component<typeof ShowScheduler> {
     const targetID = isHostA ? "HostA" : "HostB";
     const role = isHostA ? "Anchor" : "CoHost";
     
+    // Prevent overlapping if busy flag got stuck (safety check)
     if (this.hostBusy.get(targetID)) {
         this.async.setTimeout(() => this.cueNextSpeaker(), 500);
         return;
     }
 
     const myStance = isHostA ? this.currentCue.hostStance : this.currentCue.coHostStance;
-
     let lastContext = "";
     if (this.memory) {
       const last = this.memory.getLastSpeechContext();
@@ -127,8 +123,6 @@ export class ShowScheduler extends Component<typeof ShowScheduler> {
         lastContext = `Your co-host said: "${last.content}". React to this.`;
       }
     }
-
-    const pacingNote = `Pacing: ${this.currentCue.pacingStyle || "Casual"}.`;
 
     this.hostBusy.set(targetID, true);
 
@@ -139,16 +133,15 @@ export class ShowScheduler extends Component<typeof ShowScheduler> {
       context: this.currentCue.context,
       stance: myStance,
       lastSpeakerContext: lastContext,
-      pacingStyle: this.currentCue.pacingStyle, // Pass Raw Style
-      instructions: `${isHostA ? this.currentCue.hostInstructions : this.currentCue.coHostInstructions}. ${pacingNote}`
+      pacingStyle: this.currentCue.pacingStyle, 
+      instructions: isHostA ? this.currentCue.hostInstructions : this.currentCue.coHostInstructions
     });
 
     this.currentTurn++;
 
-    // RELAXED WATCHDOG: 45 Seconds
     this.watchdogTimer = this.async.setTimeout(() => {
-        console.warn(`[Scheduler] Watchdog: ${targetID} timed out! Forcing next turn.`);
-        this.hostBusy.set(targetID, false); // Force free
+        console.warn(`[Scheduler] Watchdog: ${targetID} timed out!`);
+        this.hostBusy.set(targetID, false); 
         this.cueNextSpeaker();
     }, 45000);
   }
@@ -158,10 +151,7 @@ export class ShowScheduler extends Component<typeof ShowScheduler> {
         this.async.clearTimeout(this.watchdogTimer);
         this.watchdogTimer = null;
     }
-
-    if (this.memory) {
-      this.memory.logBroadcast(data.hostID, data.contentSummary);
-    }
+    if (this.memory) this.memory.logBroadcast(data.hostID, data.contentSummary);
     this.hostBusy.set(data.hostID, false);
 
     const jitter = 0.2 + (Math.random() * 0.6);

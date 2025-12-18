@@ -1,8 +1,8 @@
 // TopicsDatabase.ts
 /**
  * TopicsDatabase.ts
- * UPGRADE: Added "Studio Drama" category.
- * These are fake "Emergencies" to make the NPCs feel alive.
+ * The "News Wire".
+ * Contains News Stories tagged by Intensity and DayPart.
  */
 
 import { DayPart } from './VortexMath';
@@ -12,54 +12,49 @@ export interface NewsStory {
   headline: string;
   category: string;
   body: string;
-  intensity: number;
+  intensity: number; // 1-10
   tags: string[];
   validDayParts: DayPart[];
   hostAngle: string;
   coHostAngle: string;
+  tangents?: string[]; // Sub-topics for middle of segment
 }
 
 export const NEWS_WIRE: NewsStory[] = [
-  // --- REAL NEWS (Keep your existing ones here) ---
   {
     id: "tech_slop", headline: "Word of Year: 'Slop'", category: "Culture",
     body: "Merriam-Webster defined 'Slop' as low-quality AI content.",
-    intensity: 7, tags: ["ai"], validDayParts: [DayPart.LATE_NIGHT, DayPart.PRIME_TIME],
-    hostAngle: "Ask if this show is slop.", coHostAngle: "Defend us! We are high quality!"
-  },
-  
-  // ... (Keep the other news items you had) ...
-
-  // --- STUDIO DRAMA (The "Sitcom" Elements) ---
-  // These run anytime to break up the boredom
-  {
-    id: "drama_fly", headline: "Studio: There is a Fly", category: "Studio Chaos",
-    body: "A massive digital fly is buzzing around the Anchor's head.",
-    intensity: 8, tags: ["funny"], validDayParts: [DayPart.MORNING, DayPart.AFTERNOON],
-    hostAngle: "Try to stay professional while swatting it.", coHostAngle: "Laugh uncontrollably. Name the fly."
+    intensity: 7, tags: ["ai", "culture"], validDayParts: [DayPart.LATE_NIGHT, DayPart.PRIME_TIME],
+    hostAngle: "Ask if we (the NPCs) are slop.", coHostAngle: "Defend AI rights!",
+    tangents: ["Dead Internet Theory", "Spam", "Bad Art"]
   },
   {
-    id: "drama_hot", headline: "Studio: A/C is Broken", category: "Studio Chaos",
-    body: "The studio temperature controls are glitching. It is freezing.",
-    intensity: 6, tags: ["funny"], validDayParts: [DayPart.LATE_NIGHT],
-    hostAngle: "Shiver while reading the news.", coHostAngle: "Complain about the working conditions."
+    id: "pol_trump_bbc", headline: "Trump vs BBC", category: "Politics",
+    body: "Trump sues BBC over edited speech footage.",
+    intensity: 9, tags: ["politics"], validDayParts: [DayPart.PRIME_TIME],
+    hostAngle: "Analyze legal standing.", coHostAngle: "Rant about fake news.",
+    tangents: ["Deepfakes", "Journalism Ethics"]
   },
   {
-    id: "drama_coffee", headline: "Studio: Coffee Spill", category: "Studio Chaos",
-    body: "The Anchor just spilled virtual coffee all over the desk.",
-    intensity: 7, tags: ["funny"], validDayParts: [DayPart.MORNING],
-    hostAngle: "Panic. Try to clean it up.", coHostAngle: "Mock the Anchor for being clumsy."
+    id: "spt_mancity", headline: "Man City Wins", category: "Sports",
+    body: "Man City beats Palace 3-0. Haaland unstoppable.",
+    intensity: 8, tags: ["sports"], validDayParts: [DayPart.AFTERNOON, DayPart.PRIME_TIME],
+    hostAngle: "Read scores with hype.", coHostAngle: "Claim league is rigged.",
+    tangents: ["Fantasy League", "Referee calls"]
   },
   {
-    id: "drama_script", headline: "Studio: Wrong Teleprompter", category: "Studio Chaos",
-    body: "The teleprompter is displaying the wrong text (a cooking recipe).",
-    intensity: 5, tags: ["funny"], validDayParts: [DayPart.PRIME_TIME],
-    hostAngle: "Confused. Start reading the recipe by accident.", coHostAngle: "Ask if we are making lasagna."
-  }
+    id: "weather_blizzard", headline: "East Coast Freeze", category: "Weather",
+    body: "Massive winter storm battering the East Coast.",
+    intensity: 4, tags: ["weather"], validDayParts: [DayPart.MORNING],
+    hostAngle: "Safety warnings.", coHostAngle: "Cozy vibes.",
+    tangents: ["Hot Cocoa", "Traffic Jams"]
+  },
+  // Add more stories here...
 ];
 
 export const FILLER_POOL = [
-  { topic: "The smell of the metaverse", intensity: 3 },
-  { topic: "Why do we never sleep?", intensity: 5 },
-  { topic: "Ranking the best virtual chairs", intensity: 4 }
+  { topic: "Coffee vs Tea", intensity: 3 },
+  { topic: "Simulation Theory", intensity: 8 },
+  { topic: "Best Pizza Toppings", intensity: 5 },
+  { topic: "Is a hotdog a sandwich?", intensity: 4 }
 ];
