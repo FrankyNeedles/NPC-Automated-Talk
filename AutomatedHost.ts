@@ -1,14 +1,4 @@
 // AutomatedHost.ts
-/**
- * AutomatedHost.ts
- * The "Talent" (AI Performer).
- * 
- * FIXES:
- * 1. CLEAN SPEECH: Strips *gestures* and (parentheticals) so TTS sounds natural.
- * 2. TIMEOUT BOOST: Increased AI wait time to 8s to reduce failure rate.
- * 3. LOGIC: Ensures 'finishSpeaking' is always called.
- */
-
 import { Component, PropTypes, NetworkEvent } from 'horizon/core';
 import { Npc, NpcConversation } from 'horizon/npc'; 
 
@@ -21,15 +11,14 @@ export class AutomatedHost extends Component<typeof AutomatedHost> {
     displayName: { type: PropTypes.String, default: "Host", label: "My Name" },
     partnerName: { type: PropTypes.String, default: "Co-Host", label: "Partner Name" },
     roleDescription: { type: PropTypes.String, default: "TV Anchor", label: "Role Desc" },
-    
     minSpeechDuration: { type: PropTypes.Number, default: 3, label: "Min Floor (s)" },
     padding: { type: PropTypes.Number, default: 1.0, label: "Breath Gap (s)" }, 
-    
     debugMode: { type: PropTypes.Boolean, default: false }
   };
 
   private npc: Npc | undefined;
   private isBusy: boolean = false;
+  private lastWords: string = ""; // Memory of my own last sentence
 
   async start() {
     this.npc = this.entity.as(Npc);
@@ -41,11 +30,10 @@ export class AutomatedHost extends Component<typeof AutomatedHost> {
     if (!this.npc) return;
 
     this.isBusy = true;
-
     const myName = this.props.displayName;
     const otherName = this.props.partnerName;
 
-    // 1. CLEAN PROMPT
+    // ANTI-REPETITION PROMPT
     const systemPrompt = 
       `ROLE: You are ${myName}, the ${this.props.roleDescription}.\n` +
       `TOPIC: ${data.topic}\n` +
@@ -53,72 +41,59 @@ export class AutomatedHost extends Component<typeof AutomatedHost> {
       `YOUR STANCE: "${data.stance}"\n` +
       `PREVIOUSLY: ${otherName} said: "${data.lastSpeakerContext}"\n` +
       `INSTRUCTIONS: ${data.instructions}\n` +
-      `RULES: \n` +
+      `CONSTRAINTS: \n` +
       `1. Speak naturally to ${otherName}.\n` +
-      `2. DO NOT use stage directions like *waves* or (laughs).\n` +
-      `3. DO NOT use hashtags.\n` +
+      `2. Defend your stance.\n` +
+      `3. Do NOT repeat this phrase: "${this.lastWords.substring(0, 50)}..."\n` +
       `OUTPUT: Spoken dialogue only.`;
 
-    if (this.props.debugMode) console.log(`[${this.props.hostID}] Speaking...`);
+    let finalSpeech = "";
 
-    let spokenText = "";
-
-    // 2. AI EXECUTION (8s Timeout)
     try {
       const aiAvailable = await NpcConversation.isAiAvailable();
       if (aiAvailable) {
         const timeoutPromise = new Promise((_, reject) => 
-            this.async.setTimeout(() => reject(new Error("AI_TIMEOUT")), 8000)
+            this.async.setTimeout(() => reject(new Error("AI_TIMEOUT")), 6000)
         );
-        
-        const response = await Promise.race([
+        const result = await Promise.race([
             this.npc.conversation.elicitResponse(systemPrompt),
             timeoutPromise
         ]);
         
-        // Handle Return Type
-        if (typeof response === 'string') spokenText = response;
-        else if ((response as any).text) spokenText = (response as any).text;
-
+        if (typeof result === 'string') finalSpeech = result;
+        else if ((result as any).text) finalSpeech = (result as any).text;
+        
       } else {
         throw new Error("AI_OFFLINE");
       }
     } catch (e) {
-      if (this.props.debugMode) console.warn(`[${this.props.hostID}] Fallback Triggered: ${e}`);
-      spokenText = `Interesting point about ${data.topic}, ${otherName}. Let's discuss that further.`;
-      // Manually speak fallback since elicitResponse failed
-      this.npc.conversation.speak(spokenText);
+      if (this.props.debugMode) console.warn(`[${this.props.hostID}] Using Backup Line.`);
+      finalSpeech = data.backupLine || "I definitely have thoughts on that.";
+      this.npc.conversation.speak(finalSpeech);
     }
 
-    // 3. SANITIZER (Double Check)
-    // Remove anything inside * * or ( )
-    const cleanText = spokenText.replace(/\*.*?\*/g, "").replace(/\(.*?\)/g, "").trim();
+    // Save for next time
+    this.lastWords = finalSpeech;
 
-    // 4. TIMING MATH
+    // Timing
     let wpm = 135; 
     if (data.pacingStyle === "Rapid") wpm = 165;
     if (data.pacingStyle === "Relaxed") wpm = 110;
 
-    const estimatedWords = cleanText.length / 5;
+    const estimatedWords = finalSpeech.length / 5;
     const estimatedSeconds = (estimatedWords / wpm) * 60;
-    
-    // Safety Cap (15s max wait)
-    const finalDuration = Math.min(Math.max(this.props.minSpeechDuration, estimatedSeconds), 15.0) + this.props.padding;
-
-    if (this.props.debugMode) {
-      console.log(`[${this.props.hostID}] Timing: ${finalDuration.toFixed(1)}s`);
-    }
+    const finalDuration = Math.min(Math.max(this.props.minSpeechDuration, estimatedSeconds), 12.0) + this.props.padding;
 
     this.async.setTimeout(() => {
-      this.finishSpeaking(data.topic);
+      this.finishSpeaking(data.topic, finalSpeech);
     }, finalDuration * 1000);
   }
 
-  private finishSpeaking(topic: string) {
+  private finishSpeaking(topic: string, text: string) {
     this.isBusy = false;
     this.sendNetworkBroadcastEvent(HostSpeechCompleteEvent, {
       hostID: this.props.hostID,
-      contentSummary: `Discussed ${topic}`
+      contentSummary: text.substring(0, 80) // Summarize for the next host
     });
   }
 }

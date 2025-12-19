@@ -1,12 +1,11 @@
 // SmartNpcMemory.ts
 /**
  * SmartNpcMemory.ts
+ * The Shared Brain.
  * 
- * FEATURES:
- * - Reputation Tracking (getPlayerReputation)
- * - Engagement Stats (getEngagementStats)
- * - Persistence (World Variables)
- * - Continuity (Anti-Repeat)
+ * FIX: "Bulletproof Mode"
+ * - Initialized all arrays inline to prevent 'undefined' errors.
+ * - Added safety checks to all push/filter operations.
  */
 
 import { Component, PropTypes, NetworkEvent, Player } from 'horizon/core';
@@ -23,6 +22,7 @@ export class SmartNpcMemory extends Component<typeof SmartNpcMemory> {
     debugMode: { type: PropTypes.Boolean, default: false }
   };
 
+  // RAM - Initialized immediately to prevent crash
   private lastSpeakerID: string = "None";
   private lastSpokenContent: string = "";
   private studioAudience: string[] = []; 
@@ -30,7 +30,6 @@ export class SmartNpcMemory extends Component<typeof SmartNpcMemory> {
   private roomEnergy: string = "Normal";
   private playerCount: number = 0;
   
-  // Persistence Cache
   private usedTopicIDs: string[] = [];
   private playerReputation: Map<string, number> = new Map();
   private engagementEvents: number[] = [];
@@ -44,13 +43,13 @@ export class SmartNpcMemory extends Component<typeof SmartNpcMemory> {
     this.connectNetworkBroadcastEvent(PitchSubmittedEvent, this.handlePitchActivity.bind(this));
   }
 
-  // --- Persistence ---
+  // --- Persistence API ---
   public isContentBurned(topicID: string): boolean {
     return this.usedTopicIDs.includes(topicID);
   }
 
   public markContentAsUsed(topicID: string) {
-    if (topicID.startsWith("filler") || topicID === "generic") return;
+    if (!topicID || topicID.startsWith("filler") || topicID === "generic") return;
     this.usedTopicIDs.push(topicID);
     if (this.usedTopicIDs.length > 8) this.usedTopicIDs.shift();
     if (this.isDebug) console.log(`[Memory] Burned: ${topicID}`);
@@ -60,7 +59,7 @@ export class SmartNpcMemory extends Component<typeof SmartNpcMemory> {
     this.markContentAsUsed(topicID);
   }
 
-  // --- Reputation / Gamification ---
+  // --- Reputation ---
   public getPlayerReputation(playerName: string): number {
     return this.playerReputation.get(playerName) || 10; 
   }
@@ -74,24 +73,28 @@ export class SmartNpcMemory extends Component<typeof SmartNpcMemory> {
   public getEngagementStats(windowSeconds: number = 60): number {
     const now = Date.now();
     const cutoff = now - (windowSeconds * 1000);
+    // Safety check
+    if (!this.engagementEvents) this.engagementEvents = [];
     this.engagementEvents = this.engagementEvents.filter(t => t > cutoff);
     return Math.min(this.engagementEvents.length / 10, 1.0); 
   }
 
   // --- Context API ---
   public addStudioAudience(name: string) {
+    if (!this.studioAudience) this.studioAudience = [];
     if (!this.studioAudience.includes(name)) this.studioAudience.push(name);
   }
 
   public removeStudioAudience(name: string) {
+    if (!this.studioAudience) this.studioAudience = [];
     this.studioAudience = this.studioAudience.filter(n => n !== name);
   }
 
-  public getAudienceList(): string[] { return [...this.studioAudience]; }
-  public getRoomVibe(): string { return this.roomEnergy; }
+  public getAudienceList(): string[] { return [...(this.studioAudience || [])]; }
+  public getRoomVibe(): string { return this.roomEnergy || "Normal"; }
   
   public getLatestChatQuestion(): string {
-    if (this.chatBuffer.length === 0) return "";
+    if (!this.chatBuffer || this.chatBuffer.length === 0) return "";
     const last = this.chatBuffer[this.chatBuffer.length - 1];
     return `${last.user} asks: "${last.text}"`;
   }
@@ -104,6 +107,7 @@ export class SmartNpcMemory extends Component<typeof SmartNpcMemory> {
   public logBroadcast(hostID: string, contentSummary: string) {
     this.lastSpeakerID = hostID;
     this.lastSpokenContent = contentSummary;
+    if (this.isDebug) console.log(`[Memory] ${hostID} finished.`);
   }
 
   public getLastSpeechContext() {
@@ -112,12 +116,17 @@ export class SmartNpcMemory extends Component<typeof SmartNpcMemory> {
 
   // --- Internals ---
   private handleChat(data: { user: string; text: string; timestamp: number }) {
+    if (!this.chatBuffer) this.chatBuffer = [];
     this.chatBuffer.push(data);
+    
+    if (!this.engagementEvents) this.engagementEvents = [];
     this.engagementEvents.push(Date.now());
+    
     if (this.chatBuffer.length > 5) this.chatBuffer.shift();
   }
 
   private handlePitchActivity(data: any) {
+    if (!this.engagementEvents) this.engagementEvents = [];
     this.engagementEvents.push(Date.now());
   }
 
