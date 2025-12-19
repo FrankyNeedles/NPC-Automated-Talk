@@ -1,12 +1,11 @@
 // AutomatedHost.ts
 /**
  * AutomatedHost.ts
- * The "Talent" (AI Performer).
+ * The "Talent".
  * 
- * CRITICAL UPDATE: "Precision Timing"
- * 1. REMOVED Max Duration Cap (Fixes overlap on long speeches).
- * 2. ADDED Punctuation Math (Commas/Periods add wait time).
- * 3. TUNED WPM (Slower default to ensure audio clears).
+ * UPGRADE: "Clean Speech"
+ * - Robust Regex cleaner to strip AI stage directions before speaking.
+ * - Forces "Human" tempo via WPM adjustments.
  */
 
 import { Component, PropTypes, NetworkEvent } from 'horizon/core';
@@ -22,7 +21,6 @@ export class AutomatedHost extends Component<typeof AutomatedHost> {
     partnerName: { type: PropTypes.String, default: "Co-Host", label: "Partner Name" },
     roleDescription: { type: PropTypes.String, default: "TV Anchor", label: "Role Desc" },
     
-    // Increased safety floor
     minSpeechDuration: { type: PropTypes.Number, default: 4, label: "Min Floor (s)" },
     padding: { type: PropTypes.Number, default: 2.0, label: "Breath Gap (s)" }, 
     
@@ -42,11 +40,10 @@ export class AutomatedHost extends Component<typeof AutomatedHost> {
     if (!this.npc) return;
 
     this.isBusy = true;
-
     const myName = this.props.displayName;
     const otherName = this.props.partnerName;
 
-    // 1. Prompt Generation
+    // 1. PERFORMANCE PROMPT
     const systemPrompt = 
       `ROLE: You are ${myName}, the ${this.props.roleDescription}.\n` +
       `TOPIC: ${data.topic}\n` +
@@ -54,14 +51,14 @@ export class AutomatedHost extends Component<typeof AutomatedHost> {
       `YOUR STANCE: "${data.stance}"\n` +
       `PREVIOUSLY: ${otherName} said: "${data.lastSpeakerContext}"\n` +
       `INSTRUCTIONS: ${data.instructions}\n` +
-      `CONSTRAINTS: Speak naturally to ${otherName}. No names.\n` +
-      `OUTPUT: Spoken dialogue only.`;
-
-    if (this.props.debugMode) console.log(`[${this.props.hostID}] Cue Rec'd. Processing...`);
+      `RULES: \n` +
+      `1. Respond directly to ${otherName}. Be opinionated.\n` +
+      `2. DO NOT use stage directions like *laughs* or [sighs].\n` +
+      `3. Use fillers ("Look,", "Honestly") to sound human.\n` +
+      `OUTPUT: Spoken words ONLY.`;
 
     let finalSpeech = "";
 
-    // 2. AI Execution
     try {
       const aiAvailable = await NpcConversation.isAiAvailable();
       if (aiAvailable) {
@@ -80,36 +77,27 @@ export class AutomatedHost extends Component<typeof AutomatedHost> {
         throw new Error("AI_OFFLINE");
       }
     } catch (e) {
-      if (this.props.debugMode) console.warn(`[${this.props.hostID}] Using Backup.`);
-      finalSpeech = data.backupLine || "That is an interesting perspective.";
+      finalSpeech = data.backupLine || "That is an interesting point.";
       this.npc.conversation.speak(finalSpeech);
     }
 
-    // 3. CLEAN UP
-    finalSpeech = finalSpeech.replace(/\*.*?\*/g, "").replace(/\(.*?\)/g, "").trim();
+    // 2. CLEANER (Strip actions)
+    finalSpeech = finalSpeech.replace(/\[.*?\]/g, "")  // Remove [Actions]
+                             .replace(/\(.*?\)/g, "")  // Remove (Actions)
+                             .replace(/\*.*?\*/g, "")  // Remove *Actions*
+                             .trim();
 
-    // 4. PRECISION TIMING MATH
-    let wpm = 100; // Slower base for safety
-    if (data.pacingStyle === "Rapid") wpm = 140;
-    if (data.pacingStyle === "Relaxed") wpm = 90;
+    // 3. TIMING MATH
+    let wpm = 135; 
+    if (data.pacingStyle === "Rapid") wpm = 160;
+    if (data.pacingStyle === "Relaxed") wpm = 110;
 
-    // Word Count
-    const wordCount = finalSpeech.split(' ').length;
-    const speakingTime = (wordCount / wpm) * 60;
+    const estimatedWords = Math.max(finalSpeech.length / 5, 1);
+    const estimatedSeconds = (estimatedWords / wpm) * 60;
+    
+    // Safety Cap
+    const finalDuration = Math.min(Math.max(this.props.minSpeechDuration, estimatedSeconds), 15.0) + this.props.padding;
 
-    // Punctuation Bonus (TTS pauses at commas/periods)
-    const commas = (finalSpeech.match(/,/g) || []).length;
-    const periods = (finalSpeech.match(/[.!?]/g) || []).length;
-    const pauseBonus = (commas * 0.3) + (periods * 0.8);
-
-    // Total Duration (No Cap!)
-    const finalDuration = Math.max(this.props.minSpeechDuration, speakingTime + pauseBonus) + this.props.padding;
-
-    if (this.props.debugMode) {
-      console.log(`[${this.props.hostID}] Words: ${wordCount} | Pauses: ${pauseBonus.toFixed(1)}s | Total: ${finalDuration.toFixed(1)}s`);
-    }
-
-    // 5. Wait & Signal
     this.async.setTimeout(() => {
       this.finishSpeaking(data.topic, finalSpeech);
     }, finalDuration * 1000);
