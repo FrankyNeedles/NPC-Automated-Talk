@@ -1,14 +1,4 @@
 // NpcContextAgent.ts
-/**
- * NpcContextAgent.ts
- * The "Eyes and Ears".
- * 
- * FINAL VERSION:
- * 1. Monitors Global Player Count to set 'Room Vibe'.
- * 2. Monitors Studio Trigger to identify 'Live Audience' members.
- * 3. Feeds data cleanly into SmartNpcMemory.
- */
-
 import { Component, PropTypes, CodeBlockEvents, Player, Entity } from 'horizon/core';
 import { SmartNpcMemory } from './SmartNpcMemory';
 
@@ -24,8 +14,10 @@ export class NpcContextAgent extends Component<typeof NpcContextAgent> {
   private activePlayers: Player[] = []; 
   private playerTimers: Map<number, number> = new Map();
 
+  // Ignore NPCs
+  private ignoredNames = ["Director_NPC", "Director", "Program Director", "Anchor", "CoHost", "HostA", "HostB", "Coordinator"];
+
   start() {
-    // 1. Link Memory
     if (this.props.memoryEntity) {
       const ent = this.props.memoryEntity as Entity;
       this.memory = ent.as(SmartNpcMemory as any) as any;
@@ -33,14 +25,8 @@ export class NpcContextAgent extends Component<typeof NpcContextAgent> {
       this.memory = this.entity.as(SmartNpcMemory as any) as any;
     }
 
-    if (!this.memory && this.props.debugMode) {
-      console.warn("[Context] SmartNpcMemory not found!");
-    }
-
-    // 2. Start Vibe Check Loop
     this.async.setInterval(this.analyzeVibe.bind(this), this.props.checkInterval * 1000);
 
-    // 3. Bind Trigger Events
     if (this.props.triggerZone) {
         this.connectCodeBlockEvent(
             this.props.triggerZone,
@@ -55,31 +41,29 @@ export class NpcContextAgent extends Component<typeof NpcContextAgent> {
     }
   }
 
-  // --- STUDIO AUDIENCE LOGIC ---
-
   private onAudienceEnter(player: Player) {
     if (!this.memory) return;
-    
-    // Debounce: Cancel exit timer if they return quickly
+    const name = player.name.get();
+    if (this.ignoredNames.includes(name)) return;
+
     if (this.playerTimers.has(player.id)) {
         this.async.clearTimeout(this.playerTimers.get(player.id)!);
         this.playerTimers.delete(player.id);
     }
 
-    if (this.props.debugMode) console.log(`[Context] Audience Joined: ${player.name.get()}`);
-    
-    // Pass to Memory (which checks persistent data)
+    // Call the restored method
     this.memory.handlePlayerEntry(player);
   }
 
   private onAudienceExit(player: Player) {
     if (!this.memory) return;
+    const name = player.name.get();
+    if (this.ignoredNames.includes(name)) return;
 
-    // Delay removal by 1s to prevent flickering
     const tId = this.async.setTimeout(() => {
         if (this.memory) {
-            if (this.props.debugMode) console.log(`[Context] Audience Left: ${player.name.get()}`);
-            this.memory.handlePlayerExit(player.name.get());
+            // Call the restored method
+            this.memory.handlePlayerExit(name);
         }
         this.playerTimers.delete(player.id);
     }, 1000);
@@ -87,27 +71,17 @@ export class NpcContextAgent extends Component<typeof NpcContextAgent> {
     this.playerTimers.set(player.id, tId);
   }
 
-  // --- GLOBAL VIBE LOGIC ---
-
   private analyzeVibe() {
     if (!this.memory) return;
-
     const w = this.world as any;
     const currentPlayers = (w.getPlayers ? w.getPlayers() : w.players) as Player[];
-    this.activePlayers = currentPlayers || [];
-
-    const playerCount = this.activePlayers.length;
+    this.activePlayers = currentPlayers.filter(p => !this.ignoredNames.includes(p.name.get()));
+    
     let energyLabel = "Chill";
+    if (this.activePlayers.length > 5) energyLabel = "Chaotic";
+    else if (this.activePlayers.length > 1) energyLabel = "Active";
 
-    // Logic: More people = Higher Energy
-    if (playerCount > 5) {
-      energyLabel = "Chaotic";
-    } else if (playerCount > 1) {
-      energyLabel = "Active";
-    }
-
-    // Update Memory
-    this.memory.updateRoomStats(playerCount, energyLabel);
+    this.memory.updateRoomStats(this.activePlayers.length, energyLabel);
   }
 }
 

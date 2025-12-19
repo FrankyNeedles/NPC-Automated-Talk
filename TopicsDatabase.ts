@@ -1,21 +1,12 @@
 // TopicsDatabase.ts
 /**
  * TopicsDatabase.ts
- * The "AP Newswire".
+ * The "AP Newswire" & Content Pool.
  * 
- * UPGRADE: "Real News 2025"
- * - Realistic headlines for Dec 19, 2025.
- * - Categories mapped to TV Network Blocks.
- * - Added 'tangents' for natural conversation drift.
+ * DATE: December 19, 2025.
  */
 
-export enum DayPart {
-  MORNING = "Morning",
-  AFTERNOON = "Afternoon",
-  PRIME_TIME = "PrimeTime",
-  LATE_NIGHT = "LateNight",
-  ANY = "Any"
-}
+import { DayPart } from './VortexMath';
 
 export interface NewsStory {
   id: string;
@@ -28,95 +19,54 @@ export interface NewsStory {
   hostAngle: string;
   coHostAngle: string;
   tangents?: string[]; 
-  bridgeTags?: string[];
 }
 
 export const NEWS_WIRE: NewsStory[] = [
-  // --- TECH / SCIFI (The big stories) ---
+  // --- TECH / SPACE ---
   {
-    id: "tech_ai_act_2025",
-    headline: "Global AI Safety Accord Signed",
-    category: "Tech News",
-    body: "World leaders met in Geneva today to sign the 2025 AI Safety Accord, limiting autonomous agent capabilities in financial markets.",
-    intensity: 8,
-    tags: ["tech", "politics", "future"],
-    validDayParts: [DayPart.PRIME_TIME, DayPart.MORNING],
-    hostAngle: "Analyze the impact on the economy. Be serious.",
-    coHostAngle: "Be skeptical. Will it actually stop anything?",
-    tangents: ["Robot Stock Traders", "The 2024 Flash Crash", "Can you jail an AI?"]
+    id: "tech_starship", headline: "Starship Lands Successfully", category: "Space",
+    body: "SpaceX's Starship has successfully landed on the Moon for the Artemis precursor mission. NASA confirms payload deployed.",
+    intensity: 9, tags: ["space", "future"], validDayParts: [DayPart.PRIME_TIME, DayPart.MORNING],
+    hostAngle: "Awestruck. This is history.", coHostAngle: "Skeptical. Did they fake it?",
+    tangents: ["Moon Base Alpha", "Mars is next", "Space Tourism"]
   },
   {
-    id: "tech_vr_haptics",
-    headline: "Haptic Suits: The Holiday Sellout",
-    category: "Consumer Tech",
-    body: "The 'OmniSkin' haptic suit is the #1 gift this holiday season, despite reports of it tickling people uncontrollably due to a bug.",
-    intensity: 5,
-    tags: ["gaming", "holiday", "funny"],
-    validDayParts: [DayPart.MORNING, DayPart.AFTERNOON],
-    hostAngle: "Consumer warning about the glitch.",
-    coHostAngle: "Laugh about it. Admit you want one.",
-    tangents: ["VR Fails", "Holiday Shopping Chaos", "Tickle Torture"]
+    id: "tech_ai_law", headline: "Global AI Accord Signed", category: "Tech",
+    body: "The 2025 Geneva Accord on AI Safety was signed today, banning autonomous agents from controlling nuclear infrastructure.",
+    intensity: 8, tags: ["ai", "politics"], validDayParts: [DayPart.PRIME_TIME],
+    hostAngle: "Relieved. Safety first.", coHostAngle: "Annoyed. They are stifling innovation.",
+    tangents: ["Skynet", "Robot Rights", "My smart fridge is listening"]
   },
 
-  // --- WORLD / POLITICS ---
+  // --- CULTURE / HOLIDAY ---
   {
-    id: "world_mars_water",
-    headline: "Liquid Water Confirmed Under Mars Surface",
-    category: "Science",
-    body: "The Artemis rover has confirmed a massive subterranean lake beneath the Martian equator.",
-    intensity: 9,
-    tags: ["space", "science", "wonder"],
-    validDayParts: [DayPart.PRIME_TIME, DayPart.LATE_NIGHT],
-    hostAngle: "Awestruck. This changes history.",
-    coHostAngle: "Paranoid. What lives in the water?",
-    tangents: ["Aliens", "Underwater Cities", "The cost of space travel"]
+    id: "cult_gift", headline: "The 'Holo-Pet' Craze", category: "Business",
+    body: "The #1 sold-out gift this holiday is the 'Holo-Pet' AR companion. Parents are fighting in aisles for the last units.",
+    intensity: 6, tags: ["holiday", "shopping"], validDayParts: [DayPart.MORNING, DayPart.AFTERNOON],
+    hostAngle: "Consumer advice. Don't overpay.", coHostAngle: "I want a Holo-Dragon.",
+    tangents: ["Tamagotchi nostalgia", "Scalpers", "Best Christmas gift ever"]
+  },
+  {
+    id: "cult_slop", headline: "Word of Year: 'Slop'", category: "Culture",
+    body: "Merriam-Webster defined 'Slop' as low-quality AI content. It is the 2025 Word of the Year.",
+    intensity: 7, tags: ["internet"], validDayParts: [DayPart.LATE_NIGHT, DayPart.AFTERNOON],
+    hostAngle: "Ask if we are slop.", coHostAngle: "Defend the content!",
+    tangents: ["Dead Internet Theory", "Content Farms", "Algorithms"]
   },
 
-  // --- CULTURE / ENTERTAINMENT ---
+  // --- WEATHER / SEASONAL ---
   {
-    id: "ent_award_snub",
-    headline: "The Game Awards Controversy",
-    category: "Entertainment",
-    body: "Fans are rioting online after 'Generic Shooter 5' won Game of the Year over the indie darling 'Cat Simulator 2'.",
-    intensity: 7,
-    tags: ["gaming", "culture"],
-    validDayParts: [DayPart.AFTERNOON, DayPart.LATE_NIGHT],
-    hostAngle: "Play devil's advocate for the shooter.",
-    coHostAngle: "Outraged. Justice for the Cat.",
-    tangents: ["Award Shows are rigged", "Indie vs AAA", "Video Game Movies"]
-  },
-  {
-    id: "ent_music_hologram",
-    headline: "The Elvis Hologram Tour",
-    category: "Entertainment",
-    body: "The Elvis Presley hologram tour kicked off in Vegas last night to mixed reviews. Some say it's uncanny, others call it ghostly.",
-    intensity: 6,
-    tags: ["music", "tech"],
-    validDayParts: [DayPart.LATE_NIGHT, DayPart.PRIME_TIME],
-    hostAngle: "Is this respectful to the dead?",
-    coHostAngle: "It's cool! Bring back everyone!",
-    tangents: ["Digital Immortality", "Who would you see live?", "Uncanny Valley"]
-  },
-
-  // --- LIFESTYLE / FILLER ---
-  {
-    id: "life_coffee",
-    headline: "Coffee Shortage of 2025",
-    category: "Lifestyle",
-    body: "Climate shifts have caused a 30% spike in Arabica bean prices. Hipsters are panicking.",
-    intensity: 4,
-    tags: ["food", "money"],
-    validDayParts: [DayPart.MORNING],
-    hostAngle: "Give practical tips on saving money.",
-    coHostAngle: "Panic. I cannot live without caffeine.",
-    tangents: ["Tea drinkers", "Energy drinks", "Morning routines"]
+    id: "weather_solstice", headline: "Longest Night Approaches", category: "Weather",
+    body: "The Winter Solstice is in two days (Dec 21). Meteorologists predict record lows for the Midwest.",
+    intensity: 3, tags: ["weather", "winter"], validDayParts: [DayPart.MORNING, DayPart.LATE_NIGHT],
+    hostAngle: "Stay warm advice.", coHostAngle: "I love the dark. Spooky season part 2.",
+    tangents: ["Seasonal Depression", "Hot Cocoa", "Hibernation"]
   }
 ];
 
 export const FILLER_POOL = [
-  { topic: "The color of the sky today", intensity: 2 },
-  { topic: "Why do we never see baby pigeons?", intensity: 5 },
-  { topic: "Ranking the best fast food fries", intensity: 6 },
-  { topic: "If you could teleport anywhere right now", intensity: 4 },
-  { topic: "Is 2026 going to be the year of the flying car?", intensity: 5 }
+  { topic: "The best holiday movie", intensity: 5 },
+  { topic: "Why is 2026 sounding so futuristic?", intensity: 4 },
+  { topic: "New Year's Resolutions we will break", intensity: 6 },
+  { topic: "Is snow actually clean?", intensity: 3 }
 ];

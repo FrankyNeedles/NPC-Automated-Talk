@@ -3,9 +3,9 @@
  * AutomatedHost.ts
  * The "Talent".
  * 
- * UPGRADE: "Clean Speech"
- * - Robust Regex cleaner to strip AI stage directions before speaking.
- * - Forces "Human" tempo via WPM adjustments.
+ * UPGRADE: "Clean & Natural"
+ * - Strips stage directions (*laughs*) from output.
+ * - Uses human-like timing gaps.
  */
 
 import { Component, PropTypes, NetworkEvent } from 'horizon/core';
@@ -20,10 +20,8 @@ export class AutomatedHost extends Component<typeof AutomatedHost> {
     displayName: { type: PropTypes.String, default: "Host", label: "My Name" },
     partnerName: { type: PropTypes.String, default: "Co-Host", label: "Partner Name" },
     roleDescription: { type: PropTypes.String, default: "TV Anchor", label: "Role Desc" },
-    
     minSpeechDuration: { type: PropTypes.Number, default: 4, label: "Min Floor (s)" },
-    padding: { type: PropTypes.Number, default: 2.0, label: "Breath Gap (s)" }, 
-    
+    padding: { type: PropTypes.Number, default: 1.5, label: "Breath Gap (s)" }, 
     debugMode: { type: PropTypes.Boolean, default: false }
   };
 
@@ -43,7 +41,7 @@ export class AutomatedHost extends Component<typeof AutomatedHost> {
     const myName = this.props.displayName;
     const otherName = this.props.partnerName;
 
-    // 1. PERFORMANCE PROMPT
+    // 1. NATURAL PROMPT
     const systemPrompt = 
       `ROLE: You are ${myName}, the ${this.props.roleDescription}.\n` +
       `TOPIC: ${data.topic}\n` +
@@ -51,11 +49,11 @@ export class AutomatedHost extends Component<typeof AutomatedHost> {
       `YOUR STANCE: "${data.stance}"\n` +
       `PREVIOUSLY: ${otherName} said: "${data.lastSpeakerContext}"\n` +
       `INSTRUCTIONS: ${data.instructions}\n` +
-      `RULES: \n` +
-      `1. Respond directly to ${otherName}. Be opinionated.\n` +
-      `2. DO NOT use stage directions like *laughs* or [sighs].\n` +
-      `3. Use fillers ("Look,", "Honestly") to sound human.\n` +
-      `OUTPUT: Spoken words ONLY.`;
+      `RULES:\n` +
+      `1. Respond naturally. Use fillers like "Look," or "Honestly."\n` +
+      `2. DO NOT use stage directions like *waves* or (laughs).\n` +
+      `3. Keep it spoken-word style.\n` +
+      `OUTPUT: Spoken dialogue only.`;
 
     let finalSpeech = "";
 
@@ -63,7 +61,7 @@ export class AutomatedHost extends Component<typeof AutomatedHost> {
       const aiAvailable = await NpcConversation.isAiAvailable();
       if (aiAvailable) {
         const timeoutPromise = new Promise((_, reject) => 
-            this.async.setTimeout(() => reject(new Error("AI_TIMEOUT")), 8000)
+            this.async.setTimeout(() => reject(new Error("AI_TIMEOUT")), 6000)
         );
         const result = await Promise.race([
             this.npc.conversation.elicitResponse(systemPrompt),
@@ -81,25 +79,23 @@ export class AutomatedHost extends Component<typeof AutomatedHost> {
       this.npc.conversation.speak(finalSpeech);
     }
 
-    // 2. CLEANER (Strip actions)
-    finalSpeech = finalSpeech.replace(/\[.*?\]/g, "")  // Remove [Actions]
-                             .replace(/\(.*?\)/g, "")  // Remove (Actions)
-                             .replace(/\*.*?\*/g, "")  // Remove *Actions*
-                             .trim();
+    // 2. CLEANER (Sanitize Text)
+    const cleanText = finalSpeech.replace(/\*.*?\*/g, "")  // Remove *actions*
+                                 .replace(/\(.*?\)/g, "")  // Remove (actions)
+                                 .replace(/\[.*?\]/g, "")  // Remove [actions]
+                                 .trim();
 
-    // 3. TIMING MATH
+    // 3. TIMING
     let wpm = 135; 
     if (data.pacingStyle === "Rapid") wpm = 160;
     if (data.pacingStyle === "Relaxed") wpm = 110;
 
-    const estimatedWords = Math.max(finalSpeech.length / 5, 1);
+    const estimatedWords = cleanText.length / 5;
     const estimatedSeconds = (estimatedWords / wpm) * 60;
-    
-    // Safety Cap
     const finalDuration = Math.min(Math.max(this.props.minSpeechDuration, estimatedSeconds), 15.0) + this.props.padding;
 
     this.async.setTimeout(() => {
-      this.finishSpeaking(data.topic, finalSpeech);
+      this.finishSpeaking(data.topic, cleanText);
     }, finalDuration * 1000);
   }
 

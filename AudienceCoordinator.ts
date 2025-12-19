@@ -1,50 +1,53 @@
 // AudienceCoordinator.ts
 /**
  * AudienceCoordinator.ts
- * The "Studio Concierge".
+ * The "Front Desk" / Pitch Coach.
  * 
- * UPGRADE: "Natural Conversation"
- * - Converses with players in the lobby.
- * - Helps refine ideas before submitting.
- * - No longer treats players like data entry clerks.
+ * FIX: Native Conversation Mode.
+ * - Registers player as participant (like Dice NPC).
+ * - Uses Native AI Loop for chat (no manual event handling).
+ * - Monitors AI output for specific "Command Phrases" to trigger logic.
  */
 
 import { Component, PropTypes, NetworkEvent, Entity, Player, CodeBlockEvents } from 'horizon/core';
-import { Npc, NpcConversation } from 'horizon/npc'; 
+import { Npc, NpcConversation, NpcEvents } from 'horizon/npc';
 import { SmartNpcMemory } from './SmartNpcMemory';
 
 const PitchSubmittedEvent = new NetworkEvent<{ pitchId: string; userId: string; text: string; timestamp: number }>('PitchSubmittedEvent');
 const PitchDecisionEvent = new NetworkEvent<{ userId: string; accepted: boolean; reason: string }>('PitchDecisionEvent');
-const ChatMessageEvent = new NetworkEvent<{ user: string; text: string; timestamp: number }>('ChatMessageEvent');
 
 export class AudienceCoordinator extends Component<typeof AudienceCoordinator> {
   static propsDefinition = {
     coordinatorName: { type: PropTypes.String, default: "Jamie", label: "NPC Name" },
     memoryEntity: { type: PropTypes.Entity, label: "Memory Link" },
-    greetTrigger: { type: PropTypes.Entity, label: "Lobby Trigger" },
+    greetTrigger: { type: PropTypes.Entity, label: "Desk Trigger" },
+    reactionDelay: { type: PropTypes.Number, default: 0.8, label: "Reaction Time (s)" },
     debugMode: { type: PropTypes.Boolean, default: false }
   };
 
   private npc: Npc | undefined;
   private memory: SmartNpcMemory | undefined;
   
-  // Track players in the lobby to know who to talk to
-  private playersInZone: string[] = [];
-  // Track conversation state: Is the player brainstorming?
-  private playerStates: Map<string, string> = new Map(); // "Chatting" | "Pitching"
+  private playerTimers: Map<number, number> = new Map();
+  private activePitchers: string[] = [];
 
   async start() {
     this.npc = this.entity.as(Npc);
-    
+    if (!this.npc) console.error("[Coordinator] Must be on NPC!");
+
     if (this.props.memoryEntity) {
       const ent = this.props.memoryEntity as Entity;
       this.memory = ent.as(SmartNpcMemory as any) as any;
     }
 
-    // Listen for Chat (To converse)
-    this.connectNetworkBroadcastEvent(ChatMessageEvent, this.handlePlayerChat.bind(this));
-    // Listen for Decisions (To inform)
+    // Listen for Decision from Boss
     this.connectNetworkBroadcastEvent(PitchDecisionEvent, this.handleDecision.bind(this));
+
+    // Listen for NPC Output (To detect if a pitch was made)
+    // We hook into the conversation to see what the NPC said
+    if (this.npc) {
+        this.connectNetworkBroadcastEvent(NpcEvents.OnNpcFullResponse, this.handleNpcResponse.bind(this));
+    }
 
     if (this.props.greetTrigger) {
         this.connectCodeBlockEvent(
@@ -58,65 +61,96 @@ export class AudienceCoordinator extends Component<typeof AudienceCoordinator> {
             this.handleExit.bind(this)
         );
     }
+    
+    // Set the Persona immediately
+    this.setupPersona();
   }
 
-  // --- Zone Logic ---
+  private async setupPersona() {
+      if (!this.npc) return;
+      const context = 
+        `You are Jamie, the Studio Coordinator. 
+         Your job is to chat with players and help them pitch TV Show ideas.
+         If a player says "Pitch: [Idea]", you should say "SUBMITTING: [Idea]".
+         Otherwise, just be friendly and helpful.`;
+         
+      // Inject context into the NPC brain
+      // Note: Actual API for setting context varies, simplified here for clarity
+      // Most updated Horizon API uses the Character Builder for this text.
+  }
+
+  // --- Proximity Logic (Exact match to Dice NPC) ---
 
   private handleEnter(player: Player) {
-    const name = player.name.get();
-    if (!this.playersInZone.includes(name)) {
-        this.playersInZone.push(name);
-        this.playerStates.set(name, "Chatting");
-        
-        // Friendly Greet (No "Type Here" demands)
-        this.npc?.conversation.speak(`Hey ${name}! Welcome to the studio. Enjoying the show?`);
+    const pid = player.id;
+    if (this.playerTimers.has(pid)) {
+        this.async.clearTimeout(this.playerTimers.get(pid)!);
+        this.playerTimers.delete(pid);
     }
+
+    const tId = this.async.setTimeout(() => {
+        this.activateInteraction(player);
+        this.playerTimers.delete(pid);
+    }, this.props.reactionDelay * 1000);
+
+    this.playerTimers.set(pid, tId);
+  }
+
+  private activateInteraction(player: Player) {
+    if (!this.npc) return;
+    
+    // 1. Register Participant (Native Mode)
+    this.npc.conversation.registerParticipant(player);
+    this.activePitchers.push(player.name.get());
+
+    if (this.memory) {
+        this.memory.handlePlayerEntry(player);
+        const profile = this.memory.getPlayerProfile(player.name.get());
+        
+        // Optional: Send a hidden context update to the AI about this player
+        // "Player Franky has visited 5 times."
+    }
+
+    // 2. Initial Greet (Optional - AI might do this auto, but we force it for consistency)
+    // We use .speak() for the initial hello so it's instant
+    this.npc.conversation.speak(`Hi ${player.name.get()}! Got a show idea?`);
   }
 
   private handleExit(player: Player) {
+    if (!this.npc) return;
+    
+    const pid = player.id;
     const name = player.name.get();
-    this.playersInZone = this.playersInZone.filter(n => n !== name);
-    this.playerStates.delete(name);
+
+    // Unregister (Native Mode)
+    this.npc.conversation.unregisterParticipant(player);
+    this.activePitchers = this.activePitchers.filter(n => n !== name);
+
+    if (this.memory) {
+        this.memory.handlePlayerExit(name);
+    }
+
+    if (this.playerTimers.has(pid)) {
+        this.async.clearTimeout(this.playerTimers.get(pid)!);
+        this.playerTimers.delete(pid);
+    }
   }
 
-  // --- Conversation Logic ---
+  // --- The Logic Hook ---
 
-  private async handlePlayerChat(data: { user: string; text: string }) {
-    // Only reply if player is standing near me
-    if (!this.playersInZone.includes(data.user)) return;
-    if (!this.npc) return;
-
-    const currentState = this.playerStates.get(data.user) || "Chatting";
-
-    // AI BRAIN for the Coordinator
-    const prompt = 
-        `ACT AS: Jamie, a friendly TV Studio Page.\n` +
-        `USER: ${data.user}.\n` +
-        `USER SAID: "${data.text}"\n` +
-        `CURRENT STATE: ${currentState}.\n` +
-        `GOAL: Chat casually. If they suggest a show topic, ask if they want to pitch it to the producer.\n` +
-        `IF PITCHING: If they say "Yes" to pitching, output: [SUBMIT_PITCH].\n` +
-        `OUTPUT: Natural dialogue reply.`;
-
-    try {
-        const aiAvailable = await NpcConversation.isAiAvailable();
-        if (aiAvailable) {
-            const response = await this.npc.conversation.elicitResponse(prompt);
-            const text = typeof response === 'string' ? response : (response as any).text;
-
-            // Check for AI Command
-            if (text.includes("[SUBMIT_PITCH]")) {
-                // Submit the PREVIOUS idea (simplified logic for now, we just submit the current text)
-                this.submitPitch(data.user, data.text);
-                this.npc.conversation.speak(`On it! Sending that idea to the control room right now.`);
-            } else {
-                // Just chat
-                this.npc.conversation.speak(text);
-            }
-        }
-    } catch (e) {
-        this.npc.conversation.speak("Haha, yeah! The show is wild today.");
-    }
+  /**
+   * Called whenever the NPC speaks (Native AI Response).
+   * We parse the text to see if the AI decided to submit a pitch.
+   */
+  private handleNpcResponse(text: string) {
+      // The instructions say: Say "SUBMITTING: [Idea]" if the player confirms.
+      if (text.includes("SUBMITTING:")) {
+          const content = text.split("SUBMITTING:")[1].trim();
+          // Find who we are talking to (Simple version: assumed the last active player)
+          const user = this.activePitchers.length > 0 ? this.activePitchers[0] : "Player";
+          
+          this.submitPitch(user, content);
+      }
   }
 
   private submitPitch(user: string, text: string) {
@@ -130,13 +164,13 @@ export class AudienceCoordinator extends Component<typeof AudienceCoordinator> {
 
   private handleDecision(data: { userId: string; accepted: boolean; reason: string }) {
     if (!this.npc) return;
-    // Only speak if player is still here
-    if (!this.playersInZone.includes(data.userId)) return;
+    // Note: We don't check if they are here, because we want the NPC to say it anyway
+    // "Oh, Franky left, but his idea got approved!"
 
     if (data.accepted) {
-        this.npc.conversation.speak(`Updates, ${data.userId}! The producer LOVED your idea. It's airing next!`);
+        this.npc.conversation.speak(`Breaking News! The pitch "${data.reason}" was APPROVED!`);
     } else {
-        this.npc.conversation.speak(`Hey ${data.userId}, bad news. Producer passed. They said: "${data.reason}". Maybe try a different angle?`);
+        this.npc.conversation.speak(`Update: The pitch was denied. Reason: ${data.reason}`);
     }
   }
 }
