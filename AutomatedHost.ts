@@ -13,6 +13,7 @@ import { Npc, NpcConversation } from 'horizon/npc';
 
 const CueHostEvent = new NetworkEvent<any>('CueHostEvent');
 const HostSpeechCompleteEvent = new NetworkEvent<{ hostID: string; contentSummary: string }>('HostSpeechCompleteEvent');
+const HostBusyEvent = new NetworkEvent<{ hostID: string }>('HostBusyEvent');
 
 export class AutomatedHost extends Component<typeof AutomatedHost> {
   static propsDefinition = {
@@ -36,13 +37,19 @@ export class AutomatedHost extends Component<typeof AutomatedHost> {
   private async handleCue(data: any) {
     if (data.targetHostID !== this.props.hostID) return;
     if (!this.npc) return;
+    if (this.isBusy) {
+      // Reject cue if already busy - scheduler will retry
+      if (this.props.debugMode) console.log(`[Host ${this.props.hostID}] Busy, rejecting cue`);
+      this.sendNetworkBroadcastEvent(HostBusyEvent, { hostID: this.props.hostID });
+      return;
+    }
 
     this.isBusy = true;
     const myName = this.props.displayName;
     const otherName = this.props.partnerName;
 
     // 1. NATURAL PROMPT
-    const systemPrompt = 
+    const systemPrompt =
       `ROLE: You are ${myName}, the ${this.props.roleDescription}.\n` +
       `TOPIC: ${data.topic}\n` +
       `CONTEXT: ${data.context}\n` +
@@ -50,10 +57,12 @@ export class AutomatedHost extends Component<typeof AutomatedHost> {
       `PREVIOUSLY: ${otherName} said: "${data.lastSpeakerContext}"\n` +
       `INSTRUCTIONS: ${data.instructions}\n` +
       `RULES:\n` +
-      `1. Respond naturally. Use fillers like "Look," or "Honestly."\n` +
-      `2. DO NOT use stage directions like *waves* or (laughs).\n` +
-      `3. Keep it spoken-word style.\n` +
-      `OUTPUT: Spoken dialogue only.`;
+      `1. Respond naturally and conversationally, like a seasoned TV host. Use fillers like "Look," "Honestly," or "You know what?" to sound human.\n` +
+      `2. DO NOT repeat phrases or ideas from previous speakers. Build on the conversation uniquely.\n` +
+      `3. Keep it spoken-word style. Avoid repetition, clichés, or robotic phrasing.\n` +
+      `4. Make it engaging and fresh – add personal anecdotes or questions if appropriate.\n` +
+      `5. DO NOT use stage directions like *waves* or (laughs).\n` +
+      `OUTPUT: Spoken dialogue only, 1-2 sentences max.`;
 
     let finalSpeech = "";
 

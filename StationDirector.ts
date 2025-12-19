@@ -65,21 +65,23 @@ export class StationDirector extends Component<typeof StationDirector> {
     const aud = this.memory ? this.memory.getAudienceList() : [];
     const audienceStr = aud.length > 0 ? `Guests in Studio: ${aud.join(", ")}` : "(Studio Empty)";
 
-    const systemPrompt = 
-      `ACT AS: Lead Writer for a TV Show.\n` +
+    const systemPrompt =
+      `ACT AS: Hollywood-Level Lead Writer for a Prime-Time TV Show.\n` +
       `FORMAT: ${data.segmentType}. ANGLE: ${data.formatSpin}. ${audienceStr}.\n` +
       `TOPIC: "${data.topic.headline}" (${data.topic.body})\n` +
-      `TASK: Write Stage Directions for HOST A (Anchor) and HOST B (Co-Host).\n` +
+      `TASK: Write Hollywood-quality Stage Directions for HOST A (Anchor) and HOST B (Co-Host).\n` +
       `REQUIREMENTS:\n` +
-      `1. STRUCTURE: Create a mini-arc. Start with a Hook, move to Conflict/Discussion, end with a Punchline/Insight.\n` +
-      `2. RELATIONSHIP: They must react to each other, not just read lines.\n` +
-      `3. DEPTH: Do not stay surface level. Dig into the 'Why' of the topic.\n` +
+      `1. STRUCTURE: Create a compelling mini-arc. Start with a Hook, build to Conflict/Discussion, end with a Punchline/Insight.\n` +
+      `2. RELATIONSHIP: They must react to each other naturally, like seasoned TV pros – banter, interruptions, callbacks.\n` +
+      `3. DEPTH: Dig deep into the 'Why' of the topic. Make it insightful, not superficial. Use real-world examples.\n` +
+      `4. HOLLYWOOD QUALITY: Write like a professional script – vivid, engaging, memorable. Avoid clichés.\n` +
+      `5. NATURAL FLOW: Ensure dialogue feels conversational, not scripted. Include personality clashes or agreements.\n` +
       `OUTPUT FORMAT:\n` +
       `PACING: [Rapid/Relaxed/Debate]\n` +
-      `ANCHOR_STANCE: [Specific Opinion]\n` +
-      `COHOST_STANCE: [Opposing/Complementary Opinion]\n` +
-      `ANCHOR_DIR: [Step-by-step direction on how to lead the arc]\n` +
-      `COHOST_DIR: [Step-by-step direction on how to react/escalate]`;
+      `ANCHOR_STANCE: [Specific, nuanced opinion]\n` +
+      `COHOST_STANCE: [Opposing/Complementary nuanced opinion]\n` +
+      `ANCHOR_DIR: [Step-by-step Hollywood-level direction on how to lead the arc]\n` +
+      `COHOST_DIR: [Step-by-step Hollywood-level direction on how to react/escalate]`;
 
     try {
       const aiReady = await NpcConversation.isAiAvailable();

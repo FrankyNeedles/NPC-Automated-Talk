@@ -15,6 +15,7 @@ const RequestSegmentEvent = new NetworkEvent('RequestSegmentEvent');
 const DirectorCueEvent = new NetworkEvent<any>('DirectorCueEvent');
 const CueHostEvent = new NetworkEvent<any>('CueHostEvent');
 const HostSpeechCompleteEvent = new NetworkEvent<{ hostID: string; contentSummary: string }>('HostSpeechCompleteEvent');
+const HostBusyEvent = new NetworkEvent<{ hostID: string }>('HostBusyEvent');
 
 export class ShowScheduler extends Component<typeof ShowScheduler> {
   static propsDefinition = {
@@ -28,12 +29,13 @@ export class ShowScheduler extends Component<typeof ShowScheduler> {
   private segmentEndTime: number = 0;
   private isDebug: boolean = false;
   private currentTurnDelay: number = 1.0;
+  private isCurrentlySpeaking: boolean = false; // Flag to prevent overlap
 
-  private currentCue: any = null; 
-  private nextCue: any = null;    
+  private currentCue: any = null;
+  private nextCue: any = null;
   private isFetching: boolean = false;
   private watchdogTimer: any = null;
-  private currentStory: NewsStory | undefined; 
+  private currentStory: NewsStory | undefined;
 
   // Generic Banter Pool
   private readonly GENERIC_BANTER = [
@@ -86,10 +88,10 @@ export class ShowScheduler extends Component<typeof ShowScheduler> {
     this.segmentEndTime = Date.now() + (duration * 1000);
 
     const style = cueData.pacingStyle || "Casual";
-    if (style === "Rapid") this.currentTurnDelay = 0.5;
-    else if (style === "Debate") this.currentTurnDelay = 1.0; 
-    else if (style === "Relaxed") this.currentTurnDelay = 2.0; 
-    else this.currentTurnDelay = 1.2;
+    if (style === "Rapid") this.currentTurnDelay = 2.0; // Slightly reduced for better flow
+    else if (style === "Debate") this.currentTurnDelay = 3.5; // Slightly reduced for debate pacing
+    else if (style === "Relaxed") this.currentTurnDelay = 4.5; // Slightly reduced for relaxed pacing
+    else this.currentTurnDelay = 3.0; // Slightly reduced default delay
 
     if (this.isDebug) console.log(`[Scheduler] LIVE: ${cueData.segment}`);
     if (this.memory) this.memory.saveGlobalState(cueData.topicID); 
@@ -102,7 +104,7 @@ export class ShowScheduler extends Component<typeof ShowScheduler> {
   }
 
   private cueNextSpeaker() {
-    if (!this.isSegmentActive || !this.currentCue) return;
+    if (!this.isSegmentActive || !this.currentCue || this.isCurrentlySpeaking) return;
 
     if (Date.now() > this.segmentEndTime) {
       this.finishSegment();
@@ -132,6 +134,8 @@ export class ShowScheduler extends Component<typeof ShowScheduler> {
         backupLine = this.GENERIC_BANTER[Math.floor(Math.random() * this.GENERIC_BANTER.length)];
     }
 
+    this.isCurrentlySpeaking = true; // Set flag before cueing
+
     this.sendNetworkBroadcastEvent(CueHostEvent, {
       targetHostID: targetID,
       role: role,
@@ -139,7 +143,7 @@ export class ShowScheduler extends Component<typeof ShowScheduler> {
       context: this.currentCue.context,
       stance: isHostA ? this.currentCue.hostStance : this.currentCue.coHostStance,
       lastSpeakerContext: lastContext,
-      pacingStyle: this.currentCue.pacingStyle, 
+      pacingStyle: this.currentCue.pacingStyle,
       instructions: instructions,
       backupLine: backupLine
     });
@@ -149,8 +153,16 @@ export class ShowScheduler extends Component<typeof ShowScheduler> {
     // UPDATE: Increased Safety Timeout to 60s
     this.watchdogTimer = this.async.setTimeout(() => {
         console.warn(`[Scheduler] Watchdog: ${targetID} timed out!`);
+        this.isCurrentlySpeaking = false; // Reset on timeout
         this.cueNextSpeaker();
     }, 60000);
+  }
+
+  private retryCueNextSpeaker() {
+    // Retry after a short delay if host was busy
+    this.async.setTimeout(() => {
+      this.cueNextSpeaker();
+    }, 1000); // Wait 1 second before retrying
   }
 
   private handleSpeechComplete(data: { hostID: string; contentSummary: string }) {
@@ -160,9 +172,17 @@ export class ShowScheduler extends Component<typeof ShowScheduler> {
     }
     if (this.memory) this.memory.logBroadcast(data.hostID, data.contentSummary);
 
+    this.isCurrentlySpeaking = false; // Reset flag when speech completes
+
     this.async.setTimeout(() => {
       this.cueNextSpeaker();
-    }, this.currentTurnDelay * 1000); 
+    }, this.currentTurnDelay * 1000);
+  }
+
+  private handleHostBusy(data: { hostID: string }) {
+    if (this.isDebug) console.log(`[Scheduler] Host ${data.hostID} is busy, retrying...`);
+    this.isCurrentlySpeaking = false; // Reset flag so we can retry
+    this.retryCueNextSpeaker();
   }
 
   private finishSegment() {

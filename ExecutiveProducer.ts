@@ -93,11 +93,25 @@ export class ExecutiveProducer extends Component<typeof ExecutiveProducer> {
 
     if (this.props.debugMode) console.log(`[EP] Reviewing Pitch: "${data.text}"`);
 
-    // AI Check
-    const systemPrompt = 
+    // AI Check and Content Generation
+    const systemPrompt =
       `ACT AS: TV Executive. VIEWER PITCH: "${data.text}"\n` +
       `DECISION: Is this suitable for broadcast?\n` +
-      `OUTPUT: \nDECISION: [APPROVED/REJECTED]\nREASON: [Why]`;
+      `If APPROVED, generate a full show concept including:\n` +
+      `- Show Title\n` +
+      `- Genre\n` +
+      `- Premise (1-2 sentences)\n` +
+      `- Target Audience\n` +
+      `- Why it fits our network\n` +
+      `OUTPUT FORMAT:\n` +
+      `DECISION: [APPROVED/REJECTED]\n` +
+      `REASON: [Why]\n` +
+      `If APPROVED:\n` +
+      `TITLE: [Show Title]\n` +
+      `GENRE: [Genre]\n` +
+      `PREMISE: [Premise]\n` +
+      `AUDIENCE: [Target Audience]\n` +
+      `FIT: [Why it fits]`;
 
     try {
         const aiReady = await NpcConversation.isAiAvailable();
