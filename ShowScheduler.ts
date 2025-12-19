@@ -1,12 +1,12 @@
 // ShowScheduler.ts
 /**
  * ShowScheduler.ts
- * The "Floor Manager".
+ * The "Floor Manager" / Sequencer.
  * 
  * RESPONSIBILITIES:
- * 1. Executes the Director's Plan.
- * 2. Enforces strict turn-taking (No overlap).
- * 3. Manages Pre-Fetching to ensure zero dead air.
+ * 1. BUFFERING: Holds the 'Next Segment' ready to play instantly.
+ * 2. SEQUENCING: Cues Host A -> Wait -> Cue Host B -> Wait.
+ * 3. PACING: Adjusts the gap between speakers based on the Director's style.
  */
 
 import { Component, PropTypes, NetworkEvent, Entity } from 'horizon/core';
@@ -25,15 +25,20 @@ export class ShowScheduler extends Component<typeof ShowScheduler> {
   };
 
   private memory: SmartNpcMemory | undefined;
+  
+  // State
   private currentTurn: number = 0;
   private isSegmentActive: boolean = false;
   private segmentEndTime: number = 0;
   private isDebug: boolean = false;
   private currentTurnDelay: number = 1.0;
 
+  // Pipeline
   private currentCue: any = null; 
   private nextCue: any = null;    
-  private hostBusy: Map<string, boolean> = new Map();
+  private isFetching: boolean = false;
+  
+  // Watchdog
   private watchdogTimer: any = null;
 
   start() {
@@ -45,24 +50,27 @@ export class ShowScheduler extends Component<typeof ShowScheduler> {
 
     this.connectNetworkBroadcastEvent(DirectorCueEvent, this.handleDirectorResponse.bind(this));
     this.connectNetworkBroadcastEvent(HostSpeechCompleteEvent, this.handleSpeechComplete.bind(this));
-    this.hostBusy.set("HostA", false);
-    this.hostBusy.set("HostB", false);
 
-    // Initial Kickoff
+    // Initial Kickoff (Wait for Director to boot)
     this.async.setTimeout(() => {
         this.requestNextSegment();
     }, 5000);
   }
 
   private requestNextSegment() {
+      if (this.isFetching) return;
+      this.isFetching = true;
       if (this.isDebug) console.log("[Scheduler] Requesting Director Plan...");
       this.sendNetworkBroadcastEvent(RequestSegmentEvent, {});
   }
 
   private handleDirectorResponse(data: any) {
+    this.isFetching = false;
     if (!this.isSegmentActive) {
+        // Floor is cold, start immediately
         this.startSegment(data);
     } else {
+        // Floor is hot, buffer it
         if (this.isDebug) console.log(`[Scheduler] Buffered Next: ${data.segment}`);
         this.nextCue = data;
     }
@@ -74,22 +82,29 @@ export class ShowScheduler extends Component<typeof ShowScheduler> {
     this.currentTurn = 0;
     this.isSegmentActive = true;
     
+    // 1. Set Duration (From Director)
     const duration = cueData.duration || 60;
     this.segmentEndTime = Date.now() + (duration * 1000);
 
+    // 2. Set Pacing (From Director)
     const style = cueData.pacingStyle || "Casual";
-    if (style === "Rapid") this.currentTurnDelay = 0.3;
+    if (style === "Rapid") this.currentTurnDelay = 0.5;
     else if (style === "Debate") this.currentTurnDelay = 0.8; 
-    else if (style === "Relaxed") this.currentTurnDelay = 1.5; 
-    else this.currentTurnDelay = 1.0;
+    else if (style === "Relaxed") this.currentTurnDelay = 2.0; 
+    else this.currentTurnDelay = 1.2;
 
-    if (this.isDebug) console.log(`[Scheduler] LIVE: ${cueData.segment} | Style: ${style}`);
+    if (this.isDebug) console.log(`[Scheduler] LIVE: ${cueData.segment} (${duration}s) | Style: ${style}`);
     
-    // ERROR FIX: Removed the second argument '0'
-    if (this.memory) this.memory.saveGlobalState(cueData.topicID); 
+    // 3. Save State
+    if (this.memory) {
+       // We only pass the ID, memory handles the indexing logic
+       this.memory.saveGlobalState(cueData.topicID); 
+    }
 
+    // 4. Begin
     this.cueNextSpeaker();
 
+    // 5. Pre-Fetch Next (Halfway through)
     this.async.setTimeout(() => {
         this.requestNextSegment();
     }, (duration / 2) * 1000);
@@ -98,75 +113,81 @@ export class ShowScheduler extends Component<typeof ShowScheduler> {
   private cueNextSpeaker() {
     if (!this.isSegmentActive || !this.currentCue) return;
 
+    // Check Time
     if (Date.now() > this.segmentEndTime) {
       this.finishSegment();
       return;
     }
 
+    // Clear Watchdog
     if (this.watchdogTimer) this.async.clearTimeout(this.watchdogTimer);
 
+    // Ping Pong Logic
     const isHostA = (this.currentTurn % 2 === 0);
     const targetID = isHostA ? "HostA" : "HostB";
     const role = isHostA ? "Anchor" : "CoHost";
     
-    // Prevent overlapping if busy flag got stuck (safety check)
-    if (this.hostBusy.get(targetID)) {
-        this.async.setTimeout(() => this.cueNextSpeaker(), 500);
-        return;
-    }
+    const instructions = isHostA ? this.currentCue.hostInstructions : this.currentCue.coHostInstructions;
 
-    const myStance = isHostA ? this.currentCue.hostStance : this.currentCue.coHostStance;
+    // Get Context (What did the other person just say?)
     let lastContext = "";
     if (this.memory) {
       const last = this.memory.getLastSpeechContext();
       if (last.speaker !== targetID && last.speaker !== "None") {
-        lastContext = `Your co-host said: "${last.content}". React to this.`;
+        lastContext = `Your co-host said: "${last.content}". React.`;
       }
     }
 
-    this.hostBusy.set(targetID, true);
+    if (this.isDebug) console.log(`[Scheduler] Cueing ${targetID}...`);
 
     this.sendNetworkBroadcastEvent(CueHostEvent, {
       targetHostID: targetID,
       role: role,
       topic: this.currentCue.headline,
       context: this.currentCue.context,
-      stance: myStance,
+      // Pass the instruction + stance + pacing so the Host knows how to act
+      instructions: instructions,
+      stance: isHostA ? this.currentCue.hostStance : this.currentCue.coHostStance,
       lastSpeakerContext: lastContext,
-      pacingStyle: this.currentCue.pacingStyle, 
-      instructions: isHostA ? this.currentCue.hostInstructions : this.currentCue.coHostInstructions
+      pacingStyle: this.currentCue.pacingStyle
     });
 
     this.currentTurn++;
 
+    // Safety Watchdog (45s)
     this.watchdogTimer = this.async.setTimeout(() => {
-        console.warn(`[Scheduler] Watchdog: ${targetID} timed out!`);
-        this.hostBusy.set(targetID, false); 
+        console.warn(`[Scheduler] Watchdog: ${targetID} timed out! Forcing next.`);
         this.cueNextSpeaker();
     }, 45000);
   }
 
   private handleSpeechComplete(data: { hostID: string; contentSummary: string }) {
+    // Clear watchdog
     if (this.watchdogTimer) {
         this.async.clearTimeout(this.watchdogTimer);
         this.watchdogTimer = null;
     }
-    if (this.memory) this.memory.logBroadcast(data.hostID, data.contentSummary);
-    this.hostBusy.set(data.hostID, false);
 
-    const jitter = 0.2 + (Math.random() * 0.6);
-    const totalDelay = this.currentTurnDelay + jitter;
+    if (this.memory) {
+      this.memory.logBroadcast(data.hostID, data.contentSummary);
+    }
 
+    // Wait for the "Turn Delay" (Paced Gap) then cue next
     this.async.setTimeout(() => {
       this.cueNextSpeaker();
-    }, totalDelay * 1000); 
+    }, this.currentTurnDelay * 1000); 
   }
 
   private finishSegment() {
     this.isSegmentActive = false;
+    if (this.isDebug) console.log(`[Scheduler] Segment Complete.`);
+
     if (this.nextCue) {
+        // Seamless transition to buffer
         this.startSegment(this.nextCue);
     } else {
+        // Emergency: Request again
+        console.warn("[Scheduler] Buffer empty! Stalling...");
         this.requestNextSegment();
     }
   }

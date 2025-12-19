@@ -3,10 +3,11 @@
  * StationDirector.ts
  * The "Program Director" (Hidden NPC).
  * 
- * ROLE: The Brain.
- * - Plans the show silently.
- * - Only interacts with players during "Commercial Breaks" (Post-Show Window).
- * - Evaluates pitches and decides if they air next.
+ * RESPONSIBILITIES:
+ * 1. CLOCK: Tracks virtual Day Parts.
+ * 2. STRATEGY: Selects topics based on Vibe + History + Engagement.
+ * 3. GAMIFICATION: Opens "Pitch Window" after episodes. Scores pitches.
+ * 4. VISUALS: Controls the "Availability Light" and "Office Trigger".
  */
 
 import { Component, PropTypes, NetworkEvent, Entity } from 'horizon/core';
@@ -15,6 +16,7 @@ import { NEWS_WIRE, NewsStory, FILLER_POOL } from './TopicsDatabase';
 import { VortexMath, BroadcastSegment, DayPart } from './VortexMath';
 import { SmartNpcMemory } from './SmartNpcMemory';
 
+// Standard Events
 const DirectorCueEvent = new NetworkEvent<{ 
   segment: string; 
   topicID: string; 
@@ -29,11 +31,22 @@ const DirectorCueEvent = new NetworkEvent<{
 const RequestSegmentEvent = new NetworkEvent('RequestSegmentEvent');
 const PitchSubmittedEvent = new NetworkEvent<{ pitchId: string; userId: string; text: string; timestamp: number }>('PitchSubmittedEvent');
 
+// Feedback to player
+const DirectorPitchResultEvent = new NetworkEvent<{ user: string; result: string }>('DirectorPitchResultEvent');
+
 export class StationDirector extends Component<typeof StationDirector> {
   static propsDefinition = {
     memoryEntity: { type: PropTypes.Entity, label: "Memory Link" },
+    
+    // Physical Office Props
+    availabilityLight: { type: PropTypes.Entity, label: "Office Light" }, // Turns Green when taking pitches
+    officeTrigger: { type: PropTypes.Entity, label: "Office Trigger" },   // Only enabled during breaks
+    
+    // Tuning
     segmentsPerEpisode: { type: PropTypes.Number, default: 5 },
     pitchWindowDuration: { type: PropTypes.Number, default: 45 },
+    minScoreThreshold: { type: PropTypes.Number, default: 20 },
+    
     debugMode: { type: PropTypes.Boolean, default: true }
   };
 
@@ -71,14 +84,16 @@ export class StationDirector extends Component<typeof StationDirector> {
     this.connectNetworkBroadcastEvent(RequestSegmentEvent, this.handleSegmentRequest.bind(this));
     this.connectNetworkBroadcastEvent(PitchSubmittedEvent, this.handlePitch.bind(this));
 
-    // Fill buffer on boot
+    // Initialize Office State (Closed)
+    this.setOfficeState(false);
+
+    // Boot Pipeline
     this.async.setTimeout(() => this.generateFutureSegment(), 2000); 
   }
 
   public handleSegmentRequest() {
-    if (this.isPostShow) return; // Block requests during break
+    if (this.isPostShow) return; 
 
-    // Check for Commercial Break / Post-Show
     if (this.segmentsRun >= this.props.segmentsPerEpisode) {
         this.startPostShow();
         return;
@@ -99,91 +114,119 @@ export class StationDirector extends Component<typeof StationDirector> {
     }
   }
 
-  // --- Post Show Logic ---
+  // --- Post Show / Pitch Logic ---
+
   private startPostShow() {
     this.isPostShow = true;
     this.segmentsRun = 0;
     this.pendingPitches = [];
     
+    // OPEN THE OFFICE
+    this.setOfficeState(true);
     if (this.isDebug) console.log("[Director] *** PITCH WINDOW OPEN ***");
 
-    // Cue a "Break" segment so hosts stop talking
-    // Note: We send this INSTANTLY to the Scheduler.
+    // Cue "Commercial"
     this.sendNetworkBroadcastEvent(DirectorCueEvent, {
         segment: "COMMERCIAL",
         topicID: "break",
         headline: "Commercial Break",
-        context: "The Director is available for pitches.",
+        context: "The Director is available for pitches. Hosts take a break.",
         hostInstructions: "Sign off briefly.",
         coHostInstructions: "Mention grabbing coffee.",
         duration: this.props.pitchWindowDuration,
         pacingStyle: "Relaxed"
     });
 
-    // Close window after duration
     this.async.setTimeout(() => this.endPostShow(), this.props.pitchWindowDuration * 1000);
   }
 
   private handlePitch(data: { userId: string; text: string }) {
-    if (!this.isPostShow) {
-        if (this.isDebug) console.log("[Director] Rejected Pitch (Window Closed)");
-        return; 
+    if (!this.isPostShow) return;
+
+    // SCORING ALGORITHM
+    let score = 10; // Base
+    
+    // 1. Length Bonus (Effort)
+    score += Math.min(data.text.length, 20);
+    
+    // 2. Reputation Bonus (Loyalty)
+    if (this.memory) {
+        const rep = this.memory.getPlayerReputation(data.userId as any); // Cast for name lookup
+        score += rep;
     }
 
-    let score = 10 + (data.text.length > 10 ? 10 : 0);
-    if (this.memory) score += this.memory.getPlayerReputation(data.userId); 
-    
+    // 3. Engagement Bonus (Room Hype)
+    if (this.memory) {
+        const hype = this.memory.getEngagementStats(); // 0.0 to 1.0
+        score += (hype * 20);
+    }
+
     this.pendingPitches.push({ user: data.userId, text: data.text, score });
-    if (this.isDebug) console.log(`[Director] Pitch Rec'd: "${data.text}" (${score} pts)`);
+    if (this.isDebug) console.log(`[Director] Pitch: "${data.text}" Score: ${score.toFixed(1)}`);
   }
 
   private endPostShow() {
     this.isPostShow = false;
+    this.setOfficeState(false); // Close Office
+
     let winningTopic: any = null;
 
     if (this.pendingPitches.length > 0) {
+        // Pick Winner
         this.pendingPitches.sort((a, b) => b.score - a.score);
         const winner = this.pendingPitches[0];
         
-        // REWARD: The Pitch becomes the next show
-        winningTopic = {
-            id: "pitch_" + Date.now(),
-            headline: "Viewer Request",
-            category: "Audience",
-            body: `Viewer ${winner.user} proposed: "${winner.text}"`,
-            hostAngle: "Introduce viewer topic.", 
-            coHostAngle: "React strongly.",
-            validDayParts: ["Any"], intensity: 8
-        };
-        if (this.memory) this.memory.updatePlayerReputation(winner.user, 5);
+        // Threshold Check
+        if (winner.score >= this.props.minScoreThreshold) {
+            winningTopic = {
+                id: "pitch_" + Date.now(),
+                headline: "Viewer Request",
+                category: "Audience",
+                body: `Viewer ${winner.user} proposed: "${winner.text}"`,
+                hostAngle: "Introduce viewer topic.", 
+                coHostAngle: "React strongly.",
+                validDayParts: ["Any"], intensity: 8
+            };
+            if (this.memory) this.memory.updatePlayerReputation(winner.user as any, 5);
+            
+            // Notify Player
+            this.sendNetworkBroadcastEvent(DirectorPitchResultEvent, { 
+                user: winner.user, 
+                result: "ACCEPTED! Airing Next." 
+            });
+        }
     }
 
-    // Resume Broadcast
-    this.generateFutureSegment(true, winningTopic); // Force immediate send
+    this.generateFutureSegment(true, winningTopic);
   }
 
-  // --- Hybrid Pipeline ---
+  private setOfficeState(isOpen: boolean) {
+      if (this.props.availabilityLight) {
+          const light = this.props.availabilityLight as Entity;
+          // Example: Green if Open, Red/Off if Closed
+          if (light.visible) light.visible.set(isOpen);
+      }
+      // Note: Trigger logic is handled by ChatInputTerminal checking Director state
+      // or we could enable/disable the trigger entity here if needed.
+  }
+
+  // --- Hybrid Pipeline (Same as before) ---
 
   private createLogicPlan(): any {
     const { dayPart, segment, duration, roomVibe, audienceStr } = this.getEnvironmentData();
     const story = this.pickBestStory(dayPart);
-    
     let spinIndex = Math.floor(Math.random() * this.SPINS.length);
     if (roomVibe === "Chaotic") spinIndex = 1; 
     const spin = this.SPINS[spinIndex];
-
     const anchorInstr = `${spin.p1} Context: ${story.hostAngle}`;
     const coHostInstr = `${spin.p2} Context: ${story.coHostAngle}`;
-    
     let contextData = `Topic: ${story.headline}. ${story.body}. Angle: ${spin.label}. ${audienceStr}`;
     let pacing = "Casual";
-
     if (segment === "AUDIENCE_Q_A") {
         const q = this.memory ? this.memory.getLatestChatQuestion() : "";
         contextData = `Q&A. ${audienceStr}. Question: "${q}"`;
         pacing = "Relaxed";
     }
-
     return {
       segment, topicID: story.id, headline: story.headline, context: contextData,
       hostInstructions: anchorInstr, coHostInstructions: coHostInstr, duration, pacingStyle: pacing
@@ -206,7 +249,7 @@ export class StationDirector extends Component<typeof StationDirector> {
       `ACT AS: TV Producer. TIME: ${dayPart}. VIBE: ${roomVibe}. ${audienceStr}.\n` +
       `SEGMENT: ${segment}.\n` +
       `TOPIC: "${story.headline}"\n` +
-      `TASK: Write directions for hosts.\n` +
+      `TASK: Directions for hosts.\n` +
       `OUTPUT FORMAT:\n` +
       `PACING: [Rapid/Relaxed/Debate]\n` +
       `ANCHOR_DIR: [Instruction]\n` +
@@ -218,20 +261,15 @@ export class StationDirector extends Component<typeof StationDirector> {
         this.finalizePlan(this.createLogicPlan(), sendImmediately);
         return;
       }
-
       const timeoutPromise = new Promise((_, reject) => this.async.setTimeout(() => reject(new Error("Timeout")), 40000));
       const aiPromise = this.directorNPC.conversation.elicitResponse(systemPrompt);
       const response = await Promise.race([aiPromise, timeoutPromise]);
       const responseText = typeof response === 'string' ? response : (response as any).text;
-      
       this.cachedCue = this.parseAIResponse(responseText, segment, story, duration, audienceStr);
-      if (this.isDebug) console.log("[Director] Pipeline Filled (AI).");
-
     } catch (e) {
       if (this.isDebug) console.warn("[Director] Background Gen Failed. Using Logic.");
       this.cachedCue = this.createLogicPlan();
     }
-    
     this.isGenerating = false;
   }
 
@@ -241,7 +279,6 @@ export class StationDirector extends Component<typeof StationDirector> {
     else this.cachedCue = cueData;
   }
 
-  // --- Helpers ---
   private getEnvironmentData() {
     const now = new Date();
     this.showHour = now.getHours();
@@ -267,26 +304,19 @@ export class StationDirector extends Component<typeof StationDirector> {
     let pacing = "Casual";
     let anchorInstr = story.hostAngle;
     let coHostInstr = story.coHostAngle;
-
     const paceMatch = aiText.match(/PACING:\s*(\w+)/);
     const anchorMatch = aiText.match(/ANCHOR_DIR:\s*(.*)/);
     const cohostMatch = aiText.match(/COHOST_DIR:\s*(.*)/);
-
     if (paceMatch) pacing = paceMatch[1];
     if (anchorMatch) anchorInstr = anchorMatch[1];
     if (cohostMatch) coHostInstr = cohostMatch[1];
-
-    if (this.memory && story.id && !story.id.startsWith("filler") && !story.id.startsWith("pitch")) {
-        this.memory.markContentAsUsed(story.id);
-    }
-
+    if (this.memory && story.id && !story.id.startsWith("filler")) this.memory.markContentAsUsed(story.id);
     let contextData = `Topic: ${story.headline}. ${story.body}. ${audienceContext}`;
     if (segment === "AUDIENCE_Q_A") {
         const q = this.memory ? this.memory.getLatestChatQuestion() : "";
         contextData = `Q&A. ${audienceContext}. Question: "${q}"`;
         pacing = "Relaxed";
     }
-
     return { segment, topicID: story.id, headline: story.headline, context: contextData,
       hostInstructions: anchorInstr, coHostInstructions: coHostInstr, duration, pacingStyle: pacing };
   }

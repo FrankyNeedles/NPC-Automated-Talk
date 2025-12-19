@@ -2,28 +2,39 @@
 /**
  * VortexMath.ts
  * The "Master Clock" and Pacing Engine.
- * Responsibilities:
- * - Calculates Day Part (Morning/PrimeTime).
- * - Maps Vortex States to Broadcast Segments.
- * - Determines Segment Duration based on energy.
+ * 
+ * FIX: Added GAME_SHOW to the Enum to resolve TypeScript error.
  */
+
+// Re-export DayPart if defined in TopicsDatabase, or define here if circular dependency issues arise.
+// For safety in Horizon, we define it here to avoid circular imports.
+export enum DayPart {
+  MORNING = "Morning",
+  AFTERNOON = "Afternoon",
+  PRIME_TIME = "PrimeTime",
+  LATE_NIGHT = "LateNight",
+  ANY = "Any"
+}
 
 export const VORTEX_CYCLE = [1, 2, 4, 8, 7, 5];
 
 export enum BroadcastSegment {
-  STATION_ID = "STATION_ID",     // 1: Quick Intro (30s)
-  HEADLINES = "HEADLINES",       // 2: Fast Paced (60s)
-  AUDIENCE = "AUDIENCE_Q_A",     // 4: Interaction (90s)
-  DEEP_DIVE = "DEEP_DIVE",       // 8: The Main Event (180s)
-  BANTER = "BANTER",             // 7: Color Commentary (60s)
-  COMMERCIAL = "COMMERCIAL"      // 5: Reset/Pitches (Variable)
+  STATION_ID = "STATION_ID",
+  HEADLINES = "HEADLINES",
+  AUDIENCE = "AUDIENCE_Q_A",
+  DEEP_DIVE = "DEEP_DIVE",
+  BANTER = "BANTER",
+  COMMERCIAL = "COMMERCIAL",
+  GAME_SHOW = "GAME_SHOW", // Fix: Added missing member
+  INTERVIEW = "INTERVIEW"
 }
 
-export enum DayPart {
-  MORNING = "Morning Show",
-  AFTERNOON = "Mid-Day Block",
-  PRIME_TIME = "Prime Time",
-  LATE_NIGHT = "Late Night"
+export enum ShowType {
+  NEWS_HOUR = "The News Hour",
+  MORNING_ZOO = "The Morning Zoo",
+  LATE_NIGHT = "Late Night Live",
+  THE_DEBATE = "The Arena",
+  VARIETY = "Variety Hour"
 }
 
 export const VortexMath = {
@@ -46,9 +57,6 @@ export const VortexMath = {
     }
   },
 
-  /**
-   * Calculates duration based on Segment Type + Day Part.
-   */
   calculateSegmentDuration(segment: BroadcastSegment, dayPart: DayPart): number {
     let base = 60;
     switch (segment) {
@@ -57,18 +65,19 @@ export const VortexMath = {
       case BroadcastSegment.AUDIENCE: base = 90; break;
       case BroadcastSegment.DEEP_DIVE: base = 180; break;
       case BroadcastSegment.BANTER: base = 60; break;
+      case BroadcastSegment.GAME_SHOW: base = 120; break; 
       case BroadcastSegment.COMMERCIAL: base = 30; break;
     }
-    // Morning is faster, Prime Time is longer
     if (dayPart === DayPart.MORNING) return base * 0.8; 
     if (dayPart === DayPart.PRIME_TIME) return base * 1.2; 
     return base;
   },
 
-  /**
-   * Defines how hosts should speak based on time of day.
-   */
-  getPacingStyle(dayPart: DayPart): string {
+  getPacingStyle(dayPart: DayPart, showType: ShowType): string {
+    if (showType === ShowType.THE_DEBATE) return "Debate";
+    if (showType === ShowType.MORNING_ZOO) return "Rapid";
+    if (showType === ShowType.LATE_NIGHT) return "Relaxed";
+    
     switch (dayPart) {
       case DayPart.MORNING: return "Rapid";
       case DayPart.PRIME_TIME: return "Debate";

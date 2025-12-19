@@ -1,10 +1,12 @@
 // SmartNpcMemory.ts
 /**
  * SmartNpcMemory.ts
- * The Shared Brain.
- * - Bridges World Variables (Storyline, History).
- * - Tracks Player Reputation for Gamified Pitches.
- * - Tracks Engagement Stats (Heat).
+ * 
+ * FEATURES:
+ * - Reputation Tracking (getPlayerReputation)
+ * - Engagement Stats (getEngagementStats)
+ * - Persistence (World Variables)
+ * - Continuity (Anti-Repeat)
  */
 
 import { Component, PropTypes, NetworkEvent, Player } from 'horizon/core';
@@ -16,12 +18,11 @@ const PitchSubmittedEvent = new NetworkEvent<{ pitchId: string; userId: string; 
 
 export class SmartNpcMemory extends Component<typeof SmartNpcMemory> {
   static propsDefinition = {
-    storylineVar: { type: PropTypes.String, label: "Var: Storyline", default: "Storyline" },
-    lastPromptsVar: { type: PropTypes.String, label: "Var: LastPrompts", default: "LastPrompts" },
+    storylineVar: { type: PropTypes.String, default: "Storyline" },
+    lastPromptsVar: { type: PropTypes.String, default: "LastPrompts" },
     debugMode: { type: PropTypes.Boolean, default: false }
   };
 
-  // RAM
   private lastSpeakerID: string = "None";
   private lastSpokenContent: string = "";
   private studioAudience: string[] = []; 
@@ -43,7 +44,7 @@ export class SmartNpcMemory extends Component<typeof SmartNpcMemory> {
     this.connectNetworkBroadcastEvent(PitchSubmittedEvent, this.handlePitchActivity.bind(this));
   }
 
-  // --- Persistence API ---
+  // --- Persistence ---
   public isContentBurned(topicID: string): boolean {
     return this.usedTopicIDs.includes(topicID);
   }
@@ -61,7 +62,7 @@ export class SmartNpcMemory extends Component<typeof SmartNpcMemory> {
 
   // --- Reputation / Gamification ---
   public getPlayerReputation(playerName: string): number {
-    return this.playerReputation.get(playerName) || 10; // Default 10
+    return this.playerReputation.get(playerName) || 10; 
   }
 
   public updatePlayerReputation(playerName: string, delta: number) {
@@ -74,7 +75,7 @@ export class SmartNpcMemory extends Component<typeof SmartNpcMemory> {
     const now = Date.now();
     const cutoff = now - (windowSeconds * 1000);
     this.engagementEvents = this.engagementEvents.filter(t => t > cutoff);
-    return Math.min(this.engagementEvents.length / 10, 1.0); // 0.0 to 1.0
+    return Math.min(this.engagementEvents.length / 10, 1.0); 
   }
 
   // --- Context API ---
@@ -88,6 +89,7 @@ export class SmartNpcMemory extends Component<typeof SmartNpcMemory> {
 
   public getAudienceList(): string[] { return [...this.studioAudience]; }
   public getRoomVibe(): string { return this.roomEnergy; }
+  
   public getLatestChatQuestion(): string {
     if (this.chatBuffer.length === 0) return "";
     const last = this.chatBuffer[this.chatBuffer.length - 1];
@@ -121,7 +123,6 @@ export class SmartNpcMemory extends Component<typeof SmartNpcMemory> {
 
   private handleObjectToken(payload: any) {}
   
-  // Safe Hook for ContextAgent
   public handlePlayerEntry(player: Player) {
     this.addStudioAudience(player.name.get());
   }
