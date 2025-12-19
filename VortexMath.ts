@@ -1,20 +1,11 @@
 // VortexMath.ts
 /**
  * VortexMath.ts
- * The "Master Clock" and Pacing Engine.
+ * The "Master Clock".
  * 
- * FIX: Added GAME_SHOW to the Enum to resolve TypeScript error.
+ * UPGRADE: Added "Show Formats".
+ * Defines the structure of full episodes (News, Talk, Game, Drama).
  */
-
-// Re-export DayPart if defined in TopicsDatabase, or define here if circular dependency issues arise.
-// For safety in Horizon, we define it here to avoid circular imports.
-export enum DayPart {
-  MORNING = "Morning",
-  AFTERNOON = "Afternoon",
-  PRIME_TIME = "PrimeTime",
-  LATE_NIGHT = "LateNight",
-  ANY = "Any"
-}
 
 export const VORTEX_CYCLE = [1, 2, 4, 8, 7, 5];
 
@@ -25,16 +16,24 @@ export enum BroadcastSegment {
   DEEP_DIVE = "DEEP_DIVE",
   BANTER = "BANTER",
   COMMERCIAL = "COMMERCIAL",
-  GAME_SHOW = "GAME_SHOW", // Fix: Added missing member
-  INTERVIEW = "INTERVIEW"
+  GAME_SHOW = "GAME_SHOW",       // NEW
+  INTERVIEW = "INTERVIEW"        // NEW
 }
 
+export enum DayPart {
+  MORNING = "Morning Show",
+  AFTERNOON = "Mid-Day Block",
+  PRIME_TIME = "Prime Time",
+  LATE_NIGHT = "Late Night"
+}
+
+// NEW: Show Templates
 export enum ShowType {
-  NEWS_HOUR = "The News Hour",
-  MORNING_ZOO = "The Morning Zoo",
-  LATE_NIGHT = "Late Night Live",
-  THE_DEBATE = "The Arena",
-  VARIETY = "Variety Hour"
+  NEWS_HOUR = "The News Hour",         // Formal, Info-heavy
+  MORNING_ZOO = "The Morning Zoo",     // High Energy, Pranks, Games
+  LATE_NIGHT = "Late Night Live",      // Loose, Banter, Philosophy
+  THE_DEBATE = "The Arena",            // 100% Conflict
+  VARIETY = "Variety Hour"             // Mix of everything
 }
 
 export const VortexMath = {
@@ -65,8 +64,8 @@ export const VortexMath = {
       case BroadcastSegment.AUDIENCE: base = 90; break;
       case BroadcastSegment.DEEP_DIVE: base = 180; break;
       case BroadcastSegment.BANTER: base = 60; break;
-      case BroadcastSegment.GAME_SHOW: base = 120; break; 
-      case BroadcastSegment.COMMERCIAL: base = 30; break;
+      case BroadcastSegment.GAME_SHOW: base = 120; break; // Games take time
+      case BroadcastSegment.COMMERCIAL: base = 20; break;
     }
     if (dayPart === DayPart.MORNING) return base * 0.8; 
     if (dayPart === DayPart.PRIME_TIME) return base * 1.2; 
@@ -78,6 +77,7 @@ export const VortexMath = {
     if (showType === ShowType.MORNING_ZOO) return "Rapid";
     if (showType === ShowType.LATE_NIGHT) return "Relaxed";
     
+    // Default fallback
     switch (dayPart) {
       case DayPart.MORNING: return "Rapid";
       case DayPart.PRIME_TIME: return "Debate";

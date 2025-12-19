@@ -1,11 +1,9 @@
 // ShowScheduler.ts
 /**
  * ShowScheduler.ts
+ * The "Floor Manager".
  * 
- * UPGRADE: "Natural Fallbacks"
- * - Added a large pool of 'Generic Banter' lines.
- * - If the AI fails or no tangent exists, it picks a random banter line 
- *   so the hosts never repeat the exact same phrase twice in a row.
+ * UPDATE: Increased Watchdog to 60s to accommodate longer speeches.
  */
 
 import { Component, PropTypes, NetworkEvent, Entity } from 'horizon/core';
@@ -37,18 +35,11 @@ export class ShowScheduler extends Component<typeof ShowScheduler> {
   private watchdogTimer: any = null;
   private currentStory: NewsStory | undefined; 
 
-  // FALLBACK CONVERSATION POOL
+  // Generic Banter Pool
   private readonly GENERIC_BANTER = [
-    "That is a really good point.",
-    "I honestly never looked at it that way.",
-    "You might be right, but I have my doubts.",
-    "Let's keep moving, we have a lot to cover.",
-    "That reminds me of something I saw online yesterday.",
-    "I think the audience might disagree with you there.",
-    "Wait, are you serious?",
-    "Okay, fair enough.",
-    "I'm not touching that one!",
-    "Moving on before we get in trouble."
+    "That is a really good point.", "I honestly never looked at it that way.", "You might be right, but I have my doubts.",
+    "Let's keep moving, we have a lot to cover.", "That reminds me of something I saw online.", "Wait, are you serious?",
+    "Okay, fair enough.", "I'm not touching that one!"
   ];
 
   start() {
@@ -101,7 +92,6 @@ export class ShowScheduler extends Component<typeof ShowScheduler> {
     else this.currentTurnDelay = 1.2;
 
     if (this.isDebug) console.log(`[Scheduler] LIVE: ${cueData.segment}`);
-    
     if (this.memory) this.memory.saveGlobalState(cueData.topicID); 
 
     this.cueNextSpeaker();
@@ -134,14 +124,11 @@ export class ShowScheduler extends Component<typeof ShowScheduler> {
       }
     }
 
-    // SMART BACKUP SELECTION
     let backupLine = "";
-    // 50% chance to use a story tangent, 50% chance to use generic banter
     if (Math.random() > 0.5 && this.currentStory && this.currentStory.tangents && this.currentStory.tangents.length > 0) {
         const tIdx = this.currentTurn % this.currentStory.tangents.length;
         backupLine = `Speaking of that, what about ${this.currentStory.tangents[tIdx]}?`;
     } else {
-        // Pick random banter
         backupLine = this.GENERIC_BANTER[Math.floor(Math.random() * this.GENERIC_BANTER.length)];
     }
 
@@ -159,10 +146,11 @@ export class ShowScheduler extends Component<typeof ShowScheduler> {
 
     this.currentTurn++;
 
+    // UPDATE: Increased Safety Timeout to 60s
     this.watchdogTimer = this.async.setTimeout(() => {
         console.warn(`[Scheduler] Watchdog: ${targetID} timed out!`);
         this.cueNextSpeaker();
-    }, 30000);
+    }, 60000);
   }
 
   private handleSpeechComplete(data: { hostID: string; contentSummary: string }) {
@@ -170,7 +158,6 @@ export class ShowScheduler extends Component<typeof ShowScheduler> {
         this.async.clearTimeout(this.watchdogTimer);
         this.watchdogTimer = null;
     }
-
     if (this.memory) this.memory.logBroadcast(data.hostID, data.contentSummary);
 
     this.async.setTimeout(() => {

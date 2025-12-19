@@ -1,16 +1,18 @@
 // StationDirector.ts
 /**
  * StationDirector.ts
+ * The "Executive Producer".
  * 
- * UPGRADE: "Emotional Direction"
- * - Director now assigns specific emotions (Shock, Laughter, Sarcasm) 
- *   to ensure hosts don't sound flat.
+ * UPGRADE: "Showrunner Engine"
+ * - Plans full Episodes (Stacks of segments) based on Show Type.
+ * - Monitors Real-Time Ratings to pivot strategy mid-show.
+ * - Supports Games, Debates, and News blocks.
  */
 
 import { Component, PropTypes, NetworkEvent, Entity } from 'horizon/core';
 import { Npc, NpcConversation } from 'horizon/npc'; 
 import { NEWS_WIRE, NewsStory, FILLER_POOL } from './TopicsDatabase';
-import { VortexMath, BroadcastSegment, DayPart } from './VortexMath';
+import { VortexMath, BroadcastSegment, ShowType } from './VortexMath';
 import { SmartNpcMemory } from './SmartNpcMemory';
 
 const DirectorCueEvent = new NetworkEvent<any>('DirectorCueEvent');
@@ -25,20 +27,15 @@ export class StationDirector extends Component<typeof StationDirector> {
   private memory: SmartNpcMemory | undefined;
   private directorNPC: Npc | undefined;
   
-  private recentTopicIDs: string[] = [];
+  // Show State
+  private currentShowType: ShowType = ShowType.VARIETY;
+  private segmentQueue: BroadcastSegment[] = [];
   private showHour: number = 12; 
+  private recentTopicIDs: string[] = [];
   private isDebug: boolean = false;
-  private cachedCue: any = null; 
-  private isGenerating: boolean = false;
 
-  // EMOTIONAL SPINS
-  private readonly SPINS = [
-    { label: "Conflict", p1: "Argue passionately.", p2: "Dismiss their claim." },
-    { label: "Comedy", p1: "Make a joke about this.", p2: "Laugh loudly." },
-    { label: "Mystery", p1: "Whisper a secret detail.", p2: "Gasp in shock." },
-    { label: "Nostalgia", p1: "Recall a fond memory.", p2: "Agree warmly." },
-    { label: "Sarcasm", p1: "Be incredibly sarcastic.", p2: "Roll your eyes verbally." }
-  ];
+  // Real-Time Stats
+  private lastAudienceCount: number = 0;
 
   async start() {
     this.isDebug = this.props.debugMode;
@@ -50,148 +47,183 @@ export class StationDirector extends Component<typeof StationDirector> {
     }
 
     this.connectNetworkBroadcastEvent(RequestSegmentEvent, this.handleSegmentRequest.bind(this));
-
-    this.async.setTimeout(() => {
-        this.generateFutureSegment();
-    }, 2000); 
   }
 
-  public handleSegmentRequest() {
-    if (this.cachedCue) {
-        if (this.isDebug) console.log(`[Director] Deploying Cached Plan.`);
-        this.sendNetworkBroadcastEvent(DirectorCueEvent, this.cachedCue);
-        this.cachedCue = null;
-        this.generateFutureSegment();
-    } else {
-        if (this.isDebug) console.log("[Director] Cache Empty. Using Logic Plan.");
-        const instantPlan = this.createLogicPlan();
-        this.sendNetworkBroadcastEvent(DirectorCueEvent, instantPlan);
-        this.generateFutureSegment();
+  public async handleSegmentRequest() {
+    if (!this.directorNPC) {
+        this.directorNPC = this.entity.as(Npc);
+        if (!this.directorNPC) return;
     }
-  }
 
-  // --- Logic Plan (Fast Path) ---
-  private createLogicPlan(): any {
-    const { dayPart, segment, duration, roomVibe, audienceStr } = this.getEnvironmentData();
-    const story = this.pickBestStory(dayPart);
+    // 1. UPDATE CLOCK & AUDIENCE
+    const now = new Date();
+    this.showHour = now.getHours();
+    const dayPart = VortexMath.getDayPart(this.showHour);
     
-    // Pick Emotional Spin
-    let spinIndex = Math.floor(Math.random() * this.SPINS.length);
-    if (roomVibe === "Chaotic") spinIndex = 1; // Force Comedy/Conflict
-    const spin = this.SPINS[spinIndex];
+    const audience = this.memory ? this.memory.getAudienceList() : [];
+    const currentCount = audience.length;
+    const audienceStr = currentCount > 0 ? `(Guests: ${audience.join(", ")})` : "(Studio Empty)";
 
-    const anchorInstr = `${spin.p1} Context: ${story.hostAngle}`;
-    const coHostInstr = `${spin.p2} Context: ${story.coHostAngle}`;
+    // 2. RATINGS CHECK (The "Panic" Logic)
+    let ratingsAlert = "";
+    if (currentCount < this.lastAudienceCount && currentCount === 0) {
+        ratingsAlert = "RATINGS CRASH. Audience left. Switch format immediately to something controversial or loud.";
+        // Wipe queue to force a pivot
+        this.segmentQueue = []; 
+    }
+    this.lastAudienceCount = currentCount;
+
+    // 3. EPISODE MANAGEMENT
+    // If queue is empty, plan a new "Episode"
+    if (this.segmentQueue.length === 0) {
+        this.planNewEpisode(dayPart);
+    }
+
+    // Pop the next segment from the stack
+    const nextSegment = this.segmentQueue.shift() || BroadcastSegment.BANTER;
     
-    let contextData = `Topic: ${story.headline}. ${story.body}. Vibe: ${spin.label}. ${audienceStr}`;
-    let pacing = "Casual";
+    // 4. PLAN THE SEGMENT
+    const duration = VortexMath.calculateSegmentDuration(nextSegment, dayPart);
+    const pacingStyle = VortexMath.getPacingStyle(dayPart, this.currentShowType);
+    let roomVibe = this.memory ? this.memory.getRoomVibe() : "Normal";
 
-    if (segment === "AUDIENCE_Q_A") {
-        const q = this.memory ? this.memory.getLatestChatQuestion() : "";
-        contextData = `Q&A. ${audienceStr}. Question: "${q || "None"}"`;
-        pacing = "Relaxed";
-    }
-
-    if (this.memory && story.id && !story.id.startsWith("filler")) {
-        this.memory.markContentAsUsed(story.id);
-    }
-
-    return {
-      segment, topicID: story.id, headline: story.headline, context: contextData,
-      hostInstructions: anchorInstr, coHostInstructions: coHostInstr, duration, pacingStyle: pacing
-    };
-  }
-
-  // --- AI Plan (Slow Path) ---
-  private async generateFutureSegment() {
-    if (this.isGenerating || !this.directorNPC) return;
-    this.isGenerating = true;
-
-    const { dayPart, segment, duration, roomVibe, audienceStr } = this.getEnvironmentData();
-    const story = this.pickBestStory(dayPart);
-
-    // AI PROMPT: Demand Emotion
+    // Select Story Logic
+    const selectedStory = this.selectBestStory(dayPart, roomVibe, nextSegment);
+    
+    // AI Prompt Construction
     const systemPrompt = 
-      `ACT AS: TV Producer. TIME: ${dayPart}. VIBE: ${roomVibe}. ${audienceStr}.\n` +
-      `SEGMENT: ${segment}.\n` +
-      `TOPIC: ${story.headline}\n` +
-      `TASK: Write stage directions. Give distinct EMOTIONS to each host.\n` +
+      `ACT AS: Executive Producer for '${this.currentShowType}'.\n` +
+      `TIME: ${dayPart}. VIBE: ${roomVibe}. ${audienceStr}.\n` +
+      `SEGMENT: ${nextSegment}.\n` +
+      `TOPIC: "${selectedStory.headline}"\n` +
+      `RATINGS ALERT: ${ratingsAlert}\n` +
+      `TASK: Direct the Hosts. Make it fit the '${this.currentShowType}' format.\n` +
       `OUTPUT FORMAT:\n` +
-      `PACING: [Rapid/Relaxed]\n` +
-      `ANCHOR_DIR: [Action + Emotion]\n` +
-      `COHOST_DIR: [Action + Emotion]`;
+      `SELECTED_ID: ${selectedStory.id}\n` +
+      `ANCHOR_DIR: [Direction]\n` +
+      `COHOST_DIR: [Direction]`;
+
+    if (this.isDebug) console.log(`[Director] Planning ${nextSegment} for ${this.currentShowType}`);
 
     try {
       const aiReady = await NpcConversation.isAiAvailable();
       if (!aiReady) {
-        this.cachedCue = this.createLogicPlan();
-        this.isGenerating = false;
+        this.fallbackPlan(nextSegment, selectedStory, duration, pacingStyle);
         return;
       }
 
-      // 40s Timeout
-      const timeoutPromise = new Promise((_, reject) => this.async.setTimeout(() => reject(new Error("Timeout")), 40000));
-      const aiPromise = this.directorNPC.conversation.elicitResponse(systemPrompt);
-      const response = await Promise.race([aiPromise, timeoutPromise]);
+      const response = await this.directorNPC.conversation.elicitResponse(systemPrompt);
       const responseText = typeof response === 'string' ? response : (response as any).text;
       
-      this.cachedCue = this.parseAIResponse(responseText, segment, story, duration, audienceStr);
+      this.parseAndCue(responseText, nextSegment, selectedStory, duration, pacingStyle, audienceStr);
 
     } catch (e) {
-      if (this.isDebug) console.warn("[Director] Background Gen Failed. Using Logic.");
-      this.cachedCue = this.createLogicPlan();
+      console.warn("[Director] AI Error", e);
+      this.fallbackPlan(nextSegment, selectedStory, duration, pacingStyle);
     }
-    
-    this.isGenerating = false;
+  }
+
+  // --- Episode Planner ---
+
+  private planNewEpisode(dayPart: any) {
+    // Pick a Show Type based on Time
+    if (dayPart === "Morning Show") this.currentShowType = Math.random() > 0.5 ? ShowType.MORNING_ZOO : ShowType.NEWS_HOUR;
+    else if (dayPart === "Prime Time") this.currentShowType = Math.random() > 0.5 ? ShowType.THE_DEBATE : ShowType.VARIETY;
+    else if (dayPart === "Late Night") this.currentShowType = ShowType.LATE_NIGHT;
+    else this.currentShowType = ShowType.VARIETY;
+
+    // Build the Stack
+    this.segmentQueue = [
+        BroadcastSegment.STATION_ID, // Intro
+        BroadcastSegment.HEADLINES,  // Setup
+        BroadcastSegment.DEEP_DIVE,  // Main Content
+        BroadcastSegment.BANTER,     // Cool down
+        BroadcastSegment.COMMERCIAL  // Outro
+    ];
+
+    if (this.currentShowType === ShowType.MORNING_ZOO) {
+        // Swap Deep Dive for Game Show
+        this.segmentQueue[2] = BroadcastSegment.GAME_SHOW;
+    }
+
+    if (this.isDebug) console.log(`[Director] New Episode Scheduled: ${this.currentShowType}`);
   }
 
   // --- Helpers ---
-  private getEnvironmentData() {
-    const now = new Date();
-    this.showHour = now.getHours();
-    const dayPart = VortexMath.getDayPart(this.showHour);
-    const cycle = ["HEADLINES", "DEEP_DIVE", "BANTER", "AUDIENCE_Q_A"];
-    const rnd = Math.floor(Date.now() / 1000 / 120) % cycle.length; 
-    const segment = cycle[rnd];
-    const duration = VortexMath.calculateSegmentDuration(segment as any, dayPart);
-    let roomVibe = this.memory ? this.memory.getRoomVibe() : "Normal";
-    const aud = this.memory ? this.memory.getAudienceList() : [];
-    const audienceStr = aud.length > 0 ? `Guests: ${aud.length}` : "(No Guests)";
-    return { dayPart, segment, duration, roomVibe, audienceStr };
+
+  private selectBestStory(dayPart: any, vibe: string, segment: BroadcastSegment): any {
+    // Logic for specific segments
+    if (segment === BroadcastSegment.GAME_SHOW) {
+        return {
+            id: "game_trivia", headline: "Trivia Time!", category: "Fun",
+            body: "Host A quizzes Host B on random facts.",
+            hostAngle: "Quizmaster.", coHostAngle: "Guessing."
+        };
+    }
+
+    let candidates = NEWS_WIRE.filter(s => s.validDayParts.includes(dayPart));
+    if (this.memory) candidates = candidates.filter(s => !this.memory!.isContentBurned(s.id));
+
+    // Desperation Mode (Ratings Crash)
+    if (vibe === "Chaotic" || vibe === "Desperate") {
+        const intense = NEWS_WIRE.filter(s => s.intensity >= 7);
+        if (intense.length > 0) return intense[Math.floor(Math.random() * intense.length)];
+    }
+
+    if (candidates.length === 0) {
+        const filler = FILLER_POOL[Math.floor(Math.random() * FILLER_POOL.length)];
+        return {
+            id: "filler_" + Date.now(), headline: filler.topic, category: "Random",
+            body: `Subject: ${filler.topic}.`, hostAngle: "Bring it up.", coHostAngle: "React."
+        };
+    }
+    return candidates[Math.floor(Math.random() * candidates.length)];
   }
 
-  private pickBestStory(dayPart: DayPart): any {
-    let valid = NEWS_WIRE.filter(s => s.validDayParts.includes(dayPart));
-    if (this.memory) valid = valid.filter(s => !this.memory!.isContentBurned(s.id));
-    if (valid.length === 0) return FILLER_POOL[0]; 
-    return valid[Math.floor(Math.random() * valid.length)];
-  }
-
-  private parseAIResponse(aiText: string, segment: string, story: any, duration: number, audienceContext: string): any {
-    let pacing = "Casual";
+  private parseAndCue(aiText: string, segment: string, story: any, duration: number, pacing: string, audienceContext: string) {
     let anchorInstr = story.hostAngle;
     let coHostInstr = story.coHostAngle;
 
-    const paceMatch = aiText.match(/PACING:\s*(\w+)/);
     const anchorMatch = aiText.match(/ANCHOR_DIR:\s*(.*)/);
     const cohostMatch = aiText.match(/COHOST_DIR:\s*(.*)/);
 
-    if (paceMatch) pacing = paceMatch[1];
     if (anchorMatch) anchorInstr = anchorMatch[1];
     if (cohostMatch) coHostInstr = cohostMatch[1];
 
-    if (this.memory && story.id && !story.id.startsWith("filler")) this.memory.markContentAsUsed(story.id);
-
-    let contextData = `Topic: ${story.headline}. ${story.body}. ${audienceContext}`;
-    
-    if (segment === "AUDIENCE_Q_A") {
-        const q = this.memory ? this.memory.getLatestChatQuestion() : "";
-        contextData = `Q&A. ${audienceContext}. Question: "${q}"`;
-        pacing = "Relaxed";
+    if (this.memory && story.id && !story.id.startsWith("filler") && !story.id.startsWith("game")) {
+        this.memory.markContentAsUsed(story.id);
     }
 
-    return { segment, topicID: story.id, headline: story.headline, context: contextData,
-      hostInstructions: anchorInstr, coHostInstructions: coHostInstr, duration, pacingStyle: pacing };
+    if (segment === BroadcastSegment.AUDIENCE) {
+       const question = this.memory ? this.memory.getLatestChatQuestion() : "";
+       audienceContext = `Question: ${question || "None"}`;
+       anchorInstr = "Answer question.";
+       coHostInstr = "Engage.";
+    }
+
+    this.sendNetworkBroadcastEvent(DirectorCueEvent, {
+      segment: segment,
+      topicID: story.id,
+      headline: story.headline,
+      context: `Format: ${this.currentShowType}. Story: ${story.body}. ${audienceContext}`,
+      hostInstructions: anchorInstr,
+      coHostInstructions: coHostInstr,
+      duration: duration,
+      pacingStyle: pacing
+    });
+  }
+
+  private fallbackPlan(segment: string, story: any, duration: number, pacing: string) {
+    this.sendNetworkBroadcastEvent(DirectorCueEvent, {
+      segment: segment,
+      topicID: story.id,
+      headline: story.headline,
+      context: story.body,
+      hostInstructions: "Start topic.",
+      coHostInstructions: "React.",
+      duration: duration,
+      pacingStyle: pacing
+    });
   }
 }
 

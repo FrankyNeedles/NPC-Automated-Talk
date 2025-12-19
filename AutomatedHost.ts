@@ -1,4 +1,14 @@
 // AutomatedHost.ts
+/**
+ * AutomatedHost.ts
+ * The "Talent" (AI Performer).
+ * 
+ * CRITICAL UPDATE: "Precision Timing"
+ * 1. REMOVED Max Duration Cap (Fixes overlap on long speeches).
+ * 2. ADDED Punctuation Math (Commas/Periods add wait time).
+ * 3. TUNED WPM (Slower default to ensure audio clears).
+ */
+
 import { Component, PropTypes, NetworkEvent } from 'horizon/core';
 import { Npc, NpcConversation } from 'horizon/npc'; 
 
@@ -11,14 +21,16 @@ export class AutomatedHost extends Component<typeof AutomatedHost> {
     displayName: { type: PropTypes.String, default: "Host", label: "My Name" },
     partnerName: { type: PropTypes.String, default: "Co-Host", label: "Partner Name" },
     roleDescription: { type: PropTypes.String, default: "TV Anchor", label: "Role Desc" },
-    minSpeechDuration: { type: PropTypes.Number, default: 3, label: "Min Floor (s)" },
-    padding: { type: PropTypes.Number, default: 1.0, label: "Breath Gap (s)" }, 
+    
+    // Increased safety floor
+    minSpeechDuration: { type: PropTypes.Number, default: 4, label: "Min Floor (s)" },
+    padding: { type: PropTypes.Number, default: 2.0, label: "Breath Gap (s)" }, 
+    
     debugMode: { type: PropTypes.Boolean, default: false }
   };
 
   private npc: Npc | undefined;
   private isBusy: boolean = false;
-  private lastWords: string = ""; // Memory of my own last sentence
 
   async start() {
     this.npc = this.entity.as(Npc);
@@ -30,10 +42,11 @@ export class AutomatedHost extends Component<typeof AutomatedHost> {
     if (!this.npc) return;
 
     this.isBusy = true;
+
     const myName = this.props.displayName;
     const otherName = this.props.partnerName;
 
-    // ANTI-REPETITION PROMPT
+    // 1. Prompt Generation
     const systemPrompt = 
       `ROLE: You are ${myName}, the ${this.props.roleDescription}.\n` +
       `TOPIC: ${data.topic}\n` +
@@ -41,19 +54,19 @@ export class AutomatedHost extends Component<typeof AutomatedHost> {
       `YOUR STANCE: "${data.stance}"\n` +
       `PREVIOUSLY: ${otherName} said: "${data.lastSpeakerContext}"\n` +
       `INSTRUCTIONS: ${data.instructions}\n` +
-      `CONSTRAINTS: \n` +
-      `1. Speak naturally to ${otherName}.\n` +
-      `2. Defend your stance.\n` +
-      `3. Do NOT repeat this phrase: "${this.lastWords.substring(0, 50)}..."\n` +
+      `CONSTRAINTS: Speak naturally to ${otherName}. No names.\n` +
       `OUTPUT: Spoken dialogue only.`;
+
+    if (this.props.debugMode) console.log(`[${this.props.hostID}] Cue Rec'd. Processing...`);
 
     let finalSpeech = "";
 
+    // 2. AI Execution
     try {
       const aiAvailable = await NpcConversation.isAiAvailable();
       if (aiAvailable) {
         const timeoutPromise = new Promise((_, reject) => 
-            this.async.setTimeout(() => reject(new Error("AI_TIMEOUT")), 6000)
+            this.async.setTimeout(() => reject(new Error("AI_TIMEOUT")), 8000)
         );
         const result = await Promise.race([
             this.npc.conversation.elicitResponse(systemPrompt),
@@ -67,23 +80,36 @@ export class AutomatedHost extends Component<typeof AutomatedHost> {
         throw new Error("AI_OFFLINE");
       }
     } catch (e) {
-      if (this.props.debugMode) console.warn(`[${this.props.hostID}] Using Backup Line.`);
-      finalSpeech = data.backupLine || "I definitely have thoughts on that.";
+      if (this.props.debugMode) console.warn(`[${this.props.hostID}] Using Backup.`);
+      finalSpeech = data.backupLine || "That is an interesting perspective.";
       this.npc.conversation.speak(finalSpeech);
     }
 
-    // Save for next time
-    this.lastWords = finalSpeech;
+    // 3. CLEAN UP
+    finalSpeech = finalSpeech.replace(/\*.*?\*/g, "").replace(/\(.*?\)/g, "").trim();
 
-    // Timing
-    let wpm = 135; 
-    if (data.pacingStyle === "Rapid") wpm = 165;
-    if (data.pacingStyle === "Relaxed") wpm = 110;
+    // 4. PRECISION TIMING MATH
+    let wpm = 100; // Slower base for safety
+    if (data.pacingStyle === "Rapid") wpm = 140;
+    if (data.pacingStyle === "Relaxed") wpm = 90;
 
-    const estimatedWords = finalSpeech.length / 5;
-    const estimatedSeconds = (estimatedWords / wpm) * 60;
-    const finalDuration = Math.min(Math.max(this.props.minSpeechDuration, estimatedSeconds), 12.0) + this.props.padding;
+    // Word Count
+    const wordCount = finalSpeech.split(' ').length;
+    const speakingTime = (wordCount / wpm) * 60;
 
+    // Punctuation Bonus (TTS pauses at commas/periods)
+    const commas = (finalSpeech.match(/,/g) || []).length;
+    const periods = (finalSpeech.match(/[.!?]/g) || []).length;
+    const pauseBonus = (commas * 0.3) + (periods * 0.8);
+
+    // Total Duration (No Cap!)
+    const finalDuration = Math.max(this.props.minSpeechDuration, speakingTime + pauseBonus) + this.props.padding;
+
+    if (this.props.debugMode) {
+      console.log(`[${this.props.hostID}] Words: ${wordCount} | Pauses: ${pauseBonus.toFixed(1)}s | Total: ${finalDuration.toFixed(1)}s`);
+    }
+
+    // 5. Wait & Signal
     this.async.setTimeout(() => {
       this.finishSpeaking(data.topic, finalSpeech);
     }, finalDuration * 1000);
@@ -93,7 +119,7 @@ export class AutomatedHost extends Component<typeof AutomatedHost> {
     this.isBusy = false;
     this.sendNetworkBroadcastEvent(HostSpeechCompleteEvent, {
       hostID: this.props.hostID,
-      contentSummary: text.substring(0, 80) // Summarize for the next host
+      contentSummary: text.substring(0, 100)
     });
   }
 }

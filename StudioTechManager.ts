@@ -1,11 +1,12 @@
 // StudioTechManager.ts
 /**
  * StudioTechManager.ts
- * Manages the physical studio environment (Lights, SFX).
+ * Manages the Physical Studio environment.
  * 
- * Logic:
- * - When Director cues 'COMMERCIAL', turn OFF 'On Air' light.
- * - When Director cues anything else, turn ON 'On Air' light.
+ * RESPONSIBILITIES:
+ * 1. Controls "On Air" Lights.
+ * 2. Controls "Director Office" access (Enables/Disables trigger).
+ * 3. Ensures the Director only "listens" during breaks.
  */
 
 import { Component, PropTypes, NetworkEvent, Entity } from 'horizon/core';
@@ -15,44 +16,45 @@ const DirectorCueEvent = new NetworkEvent<{ segment: string }>('DirectorCueEvent
 export class StudioTechManager extends Component<typeof StudioTechManager> {
   static propsDefinition = {
     onAirLight: { type: PropTypes.Entity, label: "On Air Light" },
-    pitchLight: { type: PropTypes.Entity, label: "Pitch/Office Light" },
+    directorTrigger: { type: PropTypes.Entity, label: "Director Trigger" },
     debugMode: { type: PropTypes.Boolean, default: false }
   };
 
   start() {
     this.connectNetworkBroadcastEvent(DirectorCueEvent, this.handleCue.bind(this));
+    
+    // Default: Show is Live (Trigger Off)
+    this.setStudioState(true);
   }
 
   private handleCue(data: { segment: string }) {
-    if (!this.props.onAirLight || !this.props.pitchLight) return;
-
-    const onAir = this.props.onAirLight as Entity;
-    const pitch = this.props.pitchLight as Entity;
-
-    // "COMMERCIAL" means the show is paused -> Pitch Window is OPEN
+    // "COMMERCIAL" = Off Air = Director Available
     if (data.segment === "COMMERCIAL") {
-        if (this.props.debugMode) console.log("[Tech] State: BREAK (Pitching Open)");
-        
-        // Turn OFF On-Air, Turn ON Pitch Light
-        // (Assuming visible property controls the light, or use material colors)
-        this.setVis(onAir, false);
-        this.setVis(pitch, true);
+        this.setStudioState(false);
     } else {
-        if (this.props.debugMode) console.log("[Tech] State: LIVE");
-        
-        // Turn ON On-Air, Turn OFF Pitch Light
-        this.setVis(onAir, true);
-        this.setVis(pitch, false);
+        this.setStudioState(true);
     }
   }
 
-  private setVis(ent: Entity, visible: boolean) {
-      // Horizon API varies for visibility/lights. 
-      // If it's a light object, we might enable/disable the component.
-      // For now, we assume standard visibility toggling or color swapping.
-      if (ent && ent.visible) {
-          ent.visible.set(visible);
-      }
+  private setStudioState(isLive: boolean) {
+    if (this.props.debugMode) console.log(`[Tech] Studio Live: ${isLive}`);
+
+    // 1. Light Control
+    if (this.props.onAirLight) {
+        const light = this.props.onAirLight as Entity;
+        if (light.visible) light.visible.set(isLive);
+    }
+
+    // 2. Director Trigger Control
+    // If Live, disable trigger (Director ignores players).
+    // If Off Air, enable trigger (Director accepts pitches).
+    if (this.props.directorTrigger) {
+        const trigger = this.props.directorTrigger as Entity;
+        // Note: Horizon doesn't always allow disabling script triggers directly via API
+        // So we toggle visibility/collision or use a logic gate.
+        // For visual clarity, we toggle the object itself if possible.
+        if (trigger.visible) trigger.visible.set(!isLive); 
+    }
   }
 }
 
