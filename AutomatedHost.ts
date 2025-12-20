@@ -48,21 +48,22 @@ export class AutomatedHost extends Component<typeof AutomatedHost> {
     const myName = this.props.displayName;
     const otherName = this.props.partnerName;
 
-    // 1. NATURAL PROMPT
+    // 1. CINEMATIC PROMPT - Hollywood-level natural speech
     const systemPrompt =
-      `ROLE: You are ${myName}, the ${this.props.roleDescription}.\n` +
-      `TOPIC: ${data.topic}\n` +
+      `CHARACTER: You are ${myName}, the ${this.props.roleDescription} on a hit late-night show.\n` +
+      `SCENE: Live television discussion about "${data.topic}"\n` +
       `CONTEXT: ${data.context}\n` +
-      `YOUR STANCE: "${data.stance}"\n` +
-      `PREVIOUSLY: ${otherName} said: "${data.lastSpeakerContext}"\n` +
-      `INSTRUCTIONS: ${data.instructions}\n` +
-      `RULES:\n` +
-      `1. Respond naturally and conversationally, like a seasoned TV host. Use fillers like "Look," "Honestly," or "You know what?" to sound human.\n` +
-      `2. DO NOT repeat phrases or ideas from previous speakers. Build on the conversation uniquely.\n` +
-      `3. Keep it spoken-word style. Avoid repetition, clichés, or robotic phrasing.\n` +
-      `4. Make it engaging and fresh – add personal anecdotes or questions if appropriate.\n` +
-      `5. DO NOT use stage directions like *waves* or (laughs).\n` +
-      `OUTPUT: Spoken dialogue only, 1-2 sentences max.`;
+      `YOUR MOTIVATION: "${data.stance}"\n` +
+      `CO-HOST JUST SAID: "${data.lastSpeakerContext}"\n` +
+      `DIRECTOR'S NOTES: ${data.instructions}\n` +
+      `PERFORMANCE REQUIREMENTS:\n` +
+      `1. ACTING: Deliver like a Tony Award winner - natural timing, genuine reactions, vocal variety.\n` +
+      `2. CHEMISTRY: Respond to your co-host as an old friend. Reference their points, challenge playfully.\n` +
+      `3. HUMANITY: Add personal touches - "I remember when...", "You know what I mean?", casual asides.\n` +
+      `4. SUBSTANCE: Go deeper than surface level. Connect to real human experiences.\n` +
+      `5. FLOW: Make it conversational - interruptions welcome, natural pauses, authentic speech patterns.\n` +
+      `6. PERSONALITY: ${this.props.hostID === 'HostA' ? 'Warm authority, leads with confidence' : 'Witty challenger, keeps it lively'}\n` +
+      `OUTPUT: Pure spoken dialogue, 1-2 sentences. No stage directions, no quotation marks.`;
 
     let finalSpeech = "";
 

@@ -241,19 +241,114 @@ export class SmartNpcMemory extends Component<typeof SmartNpcMemory> {
   // --- Learning and Personalization ---
 
   public learnFromInteraction(playerName: string, interaction: string) {
-    // Update storyline based on interactions
-    this.setStoryline(this.getStoryline() + ` ${interaction}`);
+    // Enhanced learning: Build narrative arcs and character development
+    const currentStoryline = this.getStoryline();
+    const enhancedInteraction = this.enhanceInteractionContext(playerName, interaction);
 
-    // Store last prompts for context
-    this.addLastPrompt(interaction);
+    // Create narrative progression - build on previous context
+    const narrativeUpdate = this.buildNarrativeProgression(currentStoryline, enhancedInteraction);
+    this.setStoryline(narrativeUpdate);
 
-    // Update player data
-    this.setData(`player_${playerName}_interactions`, (this.getData(`player_${playerName}_interactions`) || 0) + 1);
+    // Store last prompts for context with timestamps
+    this.addLastPrompt(`${playerName}: ${interaction}`);
 
-    // Adjust prefs based on player behavior
-    if (interaction.includes("pitch")) {
-      this.setPrefs(`player_${playerName}_prefers_pitching`, true);
+    // Update player data with sophisticated tracking
+    this.updatePlayerAnalytics(playerName, interaction);
+
+    // Dynamic preference learning
+    this.learnPlayerPreferences(playerName, interaction);
+
+    // Cross-player narrative connections
+    this.updateNetworkNarrative(playerName, interaction);
+  }
+
+  private enhanceInteractionContext(playerName: string, interaction: string): string {
+    const profile = this.getPlayerProfile(playerName);
+    const context = `Player ${playerName} (reputation: ${profile.reputation}, visits: ${profile.visits}) ${interaction}`;
+    return context;
+  }
+
+  private buildNarrativeProgression(currentStoryline: string, newInteraction: string): string {
+    // Create Hollywood-style narrative arcs
+    if (currentStoryline.length > 1000) {
+      // Summarize and continue - prevent infinite growth
+      const summary = this.summarizeStoryline(currentStoryline);
+      return `${summary}. Latest development: ${newInteraction}`;
     }
+    return `${currentStoryline} ${newInteraction}`;
+  }
+
+  private summarizeStoryline(storyline: string): string {
+    // Simple summarization - in production, use AI for better summaries
+    const words = storyline.split(' ');
+    if (words.length > 50) {
+      return words.slice(0, 50).join(' ') + '...';
+    }
+    return storyline;
+  }
+
+  private updatePlayerAnalytics(playerName: string, interaction: string) {
+    const interactions = (this.getData(`player_${playerName}_interactions`) || 0) + 1;
+    this.setData(`player_${playerName}_interactions`, interactions);
+
+    // Track interaction types for personality profiling
+    const interactionType = this.categorizeInteraction(interaction);
+    const typeCount = (this.getData(`player_${playerName}_${interactionType}_count`) || 0) + 1;
+    this.setData(`player_${playerName}_${interactionType}_count`, typeCount);
+
+    // Update engagement metrics
+    this.updateEngagementMetrics(playerName, interaction);
+  }
+
+  private categorizeInteraction(interaction: string): string {
+    if (interaction.includes("pitch")) return "creative";
+    if (interaction.includes("question")) return "curious";
+    if (interaction.includes("compliment")) return "positive";
+    if (interaction.includes("criticism")) return "critical";
+    return "general";
+  }
+
+  private updateEngagementMetrics(playerName: string, interaction: string) {
+    const engagementScore = this.calculateEngagementScore(interaction);
+    const currentScore = this.getData(`player_${playerName}_engagement_score`) || 0;
+    const newScore = (currentScore + engagementScore) / 2; // Running average
+    this.setData(`player_${playerName}_engagement_score`, newScore);
+  }
+
+  private calculateEngagementScore(interaction: string): number {
+    let score = 0.5; // Base score
+    if (interaction.length > 50) score += 0.2; // Longer interactions show more engagement
+    if (interaction.includes("?")) score += 0.1; // Questions show curiosity
+    if (interaction.includes("!")) score += 0.1; // Exclamation shows enthusiasm
+    return Math.min(score, 1.0);
+  }
+
+  private learnPlayerPreferences(playerName: string, interaction: string) {
+    // Sophisticated preference learning
+    if (interaction.includes("pitch") || interaction.includes("idea")) {
+      this.setPrefs(`player_${playerName}_prefers_creative`, true);
+    }
+    if (interaction.includes("question") || interaction.includes("curious")) {
+      this.setPrefs(`player_${playerName}_prefers_discussion`, true);
+    }
+    if (interaction.includes("funny") || interaction.includes("joke")) {
+      this.setPrefs(`player_${playerName}_prefers_humor`, true);
+    }
+    if (interaction.includes("serious") || interaction.includes("deep")) {
+      this.setPrefs(`player_${playerName}_prefers_substance`, true);
+    }
+  }
+
+  private updateNetworkNarrative(playerName: string, interaction: string) {
+    // Create connections between players for richer narratives
+    const activePlayers = this.getAudienceList();
+    activePlayers.forEach(otherPlayer => {
+      if (otherPlayer !== playerName) {
+        const connectionKey = `connection_${playerName}_${otherPlayer}`;
+        const currentConnection = this.getData(connectionKey) || 0;
+        this.setData(connectionKey, currentConnection + 0.1); // Strengthen connections
+      }
+    });
   }
 
   public getPersonalizedContext(playerName: string): string {

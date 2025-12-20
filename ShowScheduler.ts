@@ -53,6 +53,7 @@ export class ShowScheduler extends Component<typeof ShowScheduler> {
 
     this.connectNetworkBroadcastEvent(DirectorCueEvent, this.handleDirectorResponse.bind(this));
     this.connectNetworkBroadcastEvent(HostSpeechCompleteEvent, this.handleSpeechComplete.bind(this));
+    this.connectNetworkBroadcastEvent(HostBusyEvent, this.handleHostBusy.bind(this));
 
     this.async.setTimeout(() => {
         this.requestNextSegment();
