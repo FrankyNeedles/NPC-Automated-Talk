@@ -6,7 +6,7 @@ import { NEWS_WIRE, NewsStory, FILLER_POOL, TopicsDatabase, TopicTemplate } from
 import { VortexMath, BroadcastSegment, DayPart } from './VortexMath';
 import { SmartNpcMemory } from './SmartNpcMemory';
 
-const DirectorBriefEvent = new NetworkEvent<any>('DirectorBriefEvent');
+const DirectorCueEvent = new NetworkEvent<any>('DirectorCueEvent');
 const ScheduleUpdateEvent = new NetworkEvent<any>('ScheduleUpdateEvent');
 const RequestSegmentEvent = new NetworkEvent('RequestSegmentEvent');
 const PitchSubmittedEvent = new NetworkEvent<any>('PitchSubmittedEvent');
@@ -15,6 +15,14 @@ const AudienceInsightEvent = new NetworkEvent<any>('AudienceInsightEvent');
 const ContentOptimizationEvent = new NetworkEvent<any>('ContentOptimizationEvent');
 const CueExecutiveEvent = new NetworkEvent<any>('CueExecutiveEvent');
 const ExecutiveSpeechCompleteEvent = new NetworkEvent<{ contentSummary: string }>('ExecutiveSpeechCompleteEvent');
+
+// Broadcast Events for Shared Variables
+const StorylineUpdateEvent = new NetworkEvent<string>('StorylineUpdateEvent');
+const LastPromptsUpdateEvent = new NetworkEvent<string[]>('LastPromptsUpdateEvent');
+const DataUpdateEvent = new NetworkEvent<{ key: string; value: any }>('DataUpdateEvent');
+const PrefsUpdateEvent = new NetworkEvent<{ key: string; value: any }>('PrefsUpdateEvent');
+const PlayerRoleUpdateEvent = new NetworkEvent<string>('PlayerRoleUpdateEvent');
+const DebugModeUpdateEvent = new NetworkEvent<boolean>('DebugModeUpdateEvent');
 
 interface ScheduleItem {
   type: string;
@@ -60,6 +68,11 @@ export class ExecutiveProducer extends Component<typeof ExecutiveProducer> {
   private currentVortex: number = 1;
   private isProcessing: boolean = false;
   private lastSpinUsed: string = "";
+  private storyline: string = "";
+  private playerRole: string = "";
+  private lastPrompts: string[] = [];
+  private audienceList: string[] = [];
+  private roomVibe: string = "";
 
   private readonly SPINS = ["Standard Report", "Heated Debate", "Deep Dive", "Hot Take", "Pop Quiz"];
 
@@ -80,6 +93,15 @@ export class ExecutiveProducer extends Component<typeof ExecutiveProducer> {
     if (this.props.memoryEntity) {
       const ent = this.props.memoryEntity as Entity;
       this.memory = ent.as(SmartNpcMemory as any) as any;
+
+      // Load memory variables
+      if (this.memory) {
+        this.storyline = this.memory.getStoryline() || "";
+        this.playerRole = this.memory.getPlayerRole() || "";
+        this.lastPrompts = this.memory.getLastPrompts() || [];
+        this.audienceList = this.memory.getAudienceList() || [];
+        this.roomVibe = this.memory.getRoomVibe() || "";
+      }
     }
 
     // Initialize TopicsDatabase
@@ -88,6 +110,14 @@ export class ExecutiveProducer extends Component<typeof ExecutiveProducer> {
     this.connectNetworkBroadcastEvent(RequestSegmentEvent, this.handleNextRequest.bind(this));
     this.connectNetworkBroadcastEvent(PitchSubmittedEvent, this.handlePitchReview.bind(this));
     this.connectNetworkBroadcastEvent(CueExecutiveEvent, this.handleCueExecutive.bind(this));
+
+    // Connect to broadcast events for shared variables
+    this.connectNetworkBroadcastEvent(StorylineUpdateEvent, this.handleStorylineUpdate.bind(this));
+    this.connectNetworkBroadcastEvent(LastPromptsUpdateEvent, this.handleLastPromptsUpdate.bind(this));
+    this.connectNetworkBroadcastEvent(DataUpdateEvent, this.handleDataUpdate.bind(this));
+    this.connectNetworkBroadcastEvent(PrefsUpdateEvent, this.handlePrefsUpdate.bind(this));
+    this.connectNetworkBroadcastEvent(PlayerRoleUpdateEvent, this.handlePlayerRoleUpdate.bind(this));
+    this.connectNetworkBroadcastEvent(DebugModeUpdateEvent, this.handleDebugModeUpdate.bind(this));
 
     this.async.setTimeout(() => this.refillSchedule(), 2000);
   }
@@ -109,7 +139,7 @@ export class ExecutiveProducer extends Component<typeof ExecutiveProducer> {
         console.log(`[EP] Airing: ${currentItem.title} (${currentItem.spin})`);
     }
 
-    this.sendNetworkBroadcastEvent(DirectorBriefEvent, {
+    this.sendNetworkBroadcastEvent(DirectorCueEvent, {
         segmentType: currentItem.segment,
         topic: currentItem.topic,
         formatSpin: currentItem.spin,
@@ -119,11 +149,59 @@ export class ExecutiveProducer extends Component<typeof ExecutiveProducer> {
     this.refillSchedule();
   }
 
+  private createScheduleItemFromTopic(topicTemplate: TopicTemplate): ScheduleItem {
+    const now = new Date();
+    const dayPart = VortexMath.getDayPart(now.getHours());
+
+    return {
+      type: "TOPIC",
+      segment: BroadcastSegment.AUDIENCE,
+      topic: {
+        id: topicTemplate.id,
+        headline: topicTemplate.title,
+        body: topicTemplate.description,
+        hostAngle: topicTemplate.stance,
+        coHostAngle: "Let's discuss this topic.",
+        intensity: 7, // Default intensity
+        validDayParts: ["Any"],
+        tangents: [topicTemplate.backupLine]
+      },
+      spin: "Discussion",
+      title: `TOPIC: ${topicTemplate.title}`,
+      predictedEngagement: 7.0,
+      emotionalTone: "Engaged",
+      targetDemographics: ["General"],
+      aiGenerated: true,
+      dayPart: dayPart,
+      priority: 3 // Medium priority for topic-based content
+    };
+  }
+
   private async refillSchedule() {
-      // (Same refill logic as before...)
-      // Keeps the queue topped up
+      // Enhanced refill with dynamic topic injection and topic queue processing
       while (this.showQueue.length < 3) {
-          this.fillQueueFast(); // Simplified for brevity, assume full logic here
+          // First, process any topics from topicQueue
+          if (this.topicQueue.length > 0) {
+              const topicId = this.topicQueue.shift();
+              if (topicId && this.topicsDB) {
+                  const topicTemplate = this.topicsDB.getFluidTopicById(topicId);
+                  if (topicTemplate) {
+                      const scheduleItem = this.createScheduleItemFromTopic(topicTemplate);
+                      this.showQueue.push(scheduleItem);
+                      continue; // Processed a topic, continue loop
+                  }
+              }
+          }
+
+          // Try dynamic topic injection
+          const dynamicTopicId = await this.generateDynamicTopicFromContext();
+          if (dynamicTopicId) {
+              this.topicQueue.push(dynamicTopicId);
+              // Since we added to topicQueue, it will be processed in next iteration
+              continue;
+          } else {
+              this.fillQueueFast(); // Fallback to static content
+          }
       }
       this.broadcastScheduleUpdate();
   }
@@ -233,7 +311,16 @@ export class ExecutiveProducer extends Component<typeof ExecutiveProducer> {
   }
 
   private parseShowConcept(text: string): any {
-    const concept: any = {};
+    const concept: any = {
+      title: "Untitled Show",
+      genre: "General Entertainment",
+      premise: "An engaging new show concept.",
+      audience: "General audience",
+      fit: "Fits our network's diverse lineup.",
+      pilotOutline: "Pilot episode introduces the main characters and premise.",
+      starPower: "Emerging talent with fresh appeal.",
+      marketingHook: "A fresh take on familiar themes."
+    };
 
     const titleMatch = text.match(/TITLE:\s*(.*?)(\n|$)/);
     const genreMatch = text.match(/GENRE:\s*(.*?)(\n|$)/);
@@ -244,14 +331,14 @@ export class ExecutiveProducer extends Component<typeof ExecutiveProducer> {
     const starMatch = text.match(/STAR_POWER:\s*(.*?)(\n|$)/);
     const marketingMatch = text.match(/MARKETING_HOOK:\s*(.*?)(\n|$)/);
 
-    if (titleMatch) concept.title = titleMatch[1].trim();
-    if (genreMatch) concept.genre = genreMatch[1].trim();
-    if (premiseMatch) concept.premise = premiseMatch[1].trim();
-    if (audienceMatch) concept.audience = audienceMatch[1].trim();
-    if (fitMatch) concept.fit = fitMatch[1].trim();
-    if (pilotMatch) concept.pilotOutline = pilotMatch[1].trim();
-    if (starMatch) concept.starPower = starMatch[1].trim();
-    if (marketingMatch) concept.marketingHook = marketingMatch[1].trim();
+    if (titleMatch && titleMatch[1].trim()) concept.title = titleMatch[1].trim();
+    if (genreMatch && genreMatch[1].trim()) concept.genre = genreMatch[1].trim();
+    if (premiseMatch && premiseMatch[1].trim()) concept.premise = premiseMatch[1].trim();
+    if (audienceMatch && audienceMatch[1].trim()) concept.audience = audienceMatch[1].trim();
+    if (fitMatch && fitMatch[1].trim()) concept.fit = fitMatch[1].trim();
+    if (pilotMatch && pilotMatch[1].trim()) concept.pilotOutline = pilotMatch[1].trim();
+    if (starMatch && starMatch[1].trim()) concept.starPower = starMatch[1].trim();
+    if (marketingMatch && marketingMatch[1].trim()) concept.marketingHook = marketingMatch[1].trim();
 
     return concept;
   }
@@ -290,6 +377,98 @@ export class ExecutiveProducer extends Component<typeof ExecutiveProducer> {
     this.sendNetworkBroadcastEvent(PitchDecisionEvent, { userId: data.userId, accepted: true, reason: reason });
 
     // Update Board Immediately
+    this.broadcastScheduleUpdate();
+  }
+
+  // Dynamic topic generation from scene context
+  private async generateDynamicTopicFromContext(): Promise<string | null> {
+    if (!this.epNPC || !this.memory || !this.topicsDB) return null;
+
+    // Gather context from memory
+    const audienceList = this.memory.getAudienceList();
+    const roomVibe = this.memory.getRoomVibe();
+    const latestChat = this.memory.getLatestChatQuestion();
+    const storyline = this.memory.getStoryline();
+    const lastPrompts = this.memory.getLastPrompts();
+
+    // Update scene metrics in TopicsDatabase
+    this.topicsDB.updateSceneMetrics({
+      playerCount: audienceList.length,
+      energy: roomVibe,
+      recentActivity: lastPrompts.slice(-3)
+    });
+
+    // Check if we have enough context for dynamic topic generation
+    if (audienceList.length === 0 && !latestChat) return null;
+
+    // Generate dynamic topic based on context
+    const contextSummary = `Audience: ${audienceList.join(', ')}. Room vibe: ${roomVibe}. Latest chat: ${latestChat}. Storyline: ${storyline.substring(-200)}`;
+
+    const systemPrompt =
+      `ACT AS: Creative TV Producer generating fresh content ideas.\n` +
+      `CURRENT CONTEXT: ${contextSummary}\n` +
+      `TASK: Generate a compelling discussion topic that fits the current scene.\n` +
+      `Consider audience mood, recent conversations, and storyline.\n` +
+      `Make it timely, engaging, and relevant to the current moment.\n` +
+      `OUTPUT FORMAT:\n` +
+      `TOPIC: [Catchy topic title]\n` +
+      `DESCRIPTION: [2-3 sentence description]\n` +
+      `WHY_FIT: [Why this fits current context]\n` +
+      `ENGAGEMENT_LEVEL: [High/Medium/Low]`;
+
+    try {
+      const response = await this.epNPC.conversation.elicitResponse(systemPrompt);
+      const text = typeof response === 'string' ? response : (response as any).text;
+      const topicData = this.parseDynamicTopic(text);
+
+      if (topicData) {
+        const topicId = `dynamic_${Date.now()}`;
+        const topicTemplate: TopicTemplate = {
+          id: topicId,
+          category: "dynamic",
+          title: topicData.topic,
+          description: topicData.description,
+          stance: "Engaged and responsive",
+          instructions: `Discuss this timely topic: ${topicData.topic}. ${topicData.whyFit}`,
+          backupLine: "That's a great topic!"
+        };
+
+        this.topicsDB.addFluidTopic(topicTemplate);
+        return topicId;
+      }
+    } catch (e) {
+      console.error("[EP] Failed to generate dynamic topic:", e);
+    }
+
+    return null;
+  }
+
+  private parseDynamicTopic(text: string): any {
+    const topicMatch = text.match(/TOPIC:\s*(.*?)(\n|$)/);
+    const descMatch = text.match(/DESCRIPTION:\s*(.*?)(\n|$)/);
+    const whyMatch = text.match(/WHY_FIT:\s*(.*?)(\n|$)/);
+    const engageMatch = text.match(/ENGAGEMENT_LEVEL:\s*(.*?)(\n|$)/);
+
+    if (topicMatch && descMatch) {
+      return {
+        topic: topicMatch[1].trim(),
+        description: descMatch[1].trim(),
+        whyFit: whyMatch ? whyMatch[1].trim() : "Fits current audience interests",
+        engagementLevel: engageMatch ? engageMatch[1].trim() : "Medium"
+      };
+    }
+    return null;
+  }
+
+  private injectDynamicTopic(topicItem: ScheduleItem) {
+    // Insert dynamic topic at medium priority position
+    const insertIndex = Math.min(2, this.showQueue.length);
+    this.showQueue.splice(insertIndex, 0, topicItem);
+
+    if (this.props.debugMode) {
+      console.log(`[EP] Injected dynamic topic: ${topicItem.title}`);
+    }
+
     this.broadcastScheduleUpdate();
   }
 
@@ -679,7 +858,7 @@ export class ExecutiveProducer extends Component<typeof ExecutiveProducer> {
   private async handleCueExecutive(data: any) {
     if (!this.epNPC) return;
 
-    // Generate executive commentary
+    // Generate executive commentary as the "Network Executive"
     const systemPrompt =
       `ACT AS: Seasoned TV Executive Producer with decades of experience.\n` +
       `CONTEXT: "${data.context}"\n` +
@@ -708,7 +887,12 @@ export class ExecutiveProducer extends Component<typeof ExecutiveProducer> {
       }
     } catch (e) {
       finalSpeech = data.backupLine || "That's an interesting development in our show.";
-      this.epNPC.conversation.speak(finalSpeech);
+      // Graceful fallback: speak the backup line
+      try {
+        this.epNPC.conversation.speak(finalSpeech);
+      } catch (ttsError) {
+        if (this.props.debugMode) console.warn(`[EP] TTS fallback failed:`, ttsError);
+      }
     }
 
     // Clean and speak
@@ -717,8 +901,13 @@ export class ExecutiveProducer extends Component<typeof ExecutiveProducer> {
                                  .replace(/\[.*?\]/g, "")
                                  .trim();
 
-    // Speak the text immediately
-    this.epNPC.conversation.speak(cleanText);
+    // Speak the text immediately with error handling
+    try {
+      this.epNPC.conversation.speak(cleanText);
+    } catch (e) {
+      if (this.props.debugMode) console.warn(`[EP] TTS failed:`, e);
+      // Fallback: do nothing, as speech completion will still trigger
+    }
 
     // Simple timing calculation
     const estimatedWords = cleanText.length / 5;
@@ -730,6 +919,31 @@ export class ExecutiveProducer extends Component<typeof ExecutiveProducer> {
         contentSummary: cleanText.substring(0, 100)
       });
     }, finalDuration * 1000);
+  }
+
+  // Broadcast event handlers for shared variables
+  public handleStorylineUpdate(value: string) {
+    this.storyline = value;
+  }
+
+  public handleLastPromptsUpdate(value: string[]) {
+    this.lastPrompts = value;
+  }
+
+  public handleDataUpdate(data: { key: string; value: any }) {
+    // Handle specific data updates if needed
+  }
+
+  public handlePrefsUpdate(data: { key: string; value: any }) {
+    // Handle specific prefs updates if needed
+  }
+
+  public handlePlayerRoleUpdate(value: string) {
+    this.playerRole = value;
+  }
+
+  public handleDebugModeUpdate(value: boolean) {
+    // Handle debug mode updates if needed
   }
 }
 

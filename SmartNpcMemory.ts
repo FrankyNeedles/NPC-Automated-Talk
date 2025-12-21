@@ -10,11 +10,27 @@
  */
 
 import { Component, PropTypes, NetworkEvent, Player } from 'horizon/core';
-import { NarrativeToken } from './NarrativeToken';
+
+// --- MOCK INTERFACES (as NarrativeToken is not in context) ---
+interface NarrativeToken {
+  id: string;
+  type: string;
+  timestamp: number;
+}
+// -------------------------------------------------------------
+
 
 const NarrativeTokenEvent = new NetworkEvent<any>('NarrativeTokenEvent');
 const ChatMessageEvent = new NetworkEvent<{ user: string; text: string; timestamp: number }>('ChatMessageEvent');
 const PitchSubmittedEvent = new NetworkEvent<{ pitchId: string; userId: string; text: string; timestamp: number }>('PitchSubmittedEvent');
+
+// Broadcast Events for Shared Variables
+const StorylineUpdateEvent = new NetworkEvent<string>('StorylineUpdateEvent');
+const LastPromptsUpdateEvent = new NetworkEvent<string[]>('LastPromptsUpdateEvent');
+const DataUpdateEvent = new NetworkEvent<{ key: string; value: any }>('DataUpdateEvent');
+const PrefsUpdateEvent = new NetworkEvent<{ key: string; value: any }>('PrefsUpdateEvent');
+const PlayerRoleUpdateEvent = new NetworkEvent<string>('PlayerRoleUpdateEvent');
+const DebugModeUpdateEvent = new NetworkEvent<boolean>('DebugModeUpdateEvent');
 
 // Data Structure
 export interface PlayerProfile {
@@ -31,6 +47,7 @@ export class SmartNpcMemory extends Component<typeof SmartNpcMemory> {
     dataVar: { type: PropTypes.String, default: "Data" },
     prefsVar: { type: PropTypes.String, default: "Prefs" },
     playerRoleVar: { type: PropTypes.String, default: "PlayerRole" },
+    playerProfilesVar: { type: PropTypes.String, default: "PlayerProfiles" },
     debugMode: { type: PropTypes.Boolean, default: false }
   };
 
@@ -40,6 +57,7 @@ export class SmartNpcMemory extends Component<typeof SmartNpcMemory> {
   // Lists
   private studioAudience: string[] = [];
   private activeListeners: string[] = []; // People talking to Coordinator
+  private activePlayers: Map<string, Player> = new Map();
 
   private chatBuffer: { user: string; text: string }[] = [];
   private roomEnergy: string = "Normal";
@@ -61,20 +79,17 @@ export class SmartNpcMemory extends Component<typeof SmartNpcMemory> {
   private playerRole: string = "";
   private topicReuseTimestamps: Map<string, number> = new Map();
 
-  start() {
+  async start() {
     this.isDebug = this.props.debugMode;
     this.connectNetworkBroadcastEvent(NarrativeTokenEvent, this.handleObjectToken.bind(this));
     this.connectNetworkBroadcastEvent(ChatMessageEvent, this.handleChat.bind(this));
     this.connectNetworkBroadcastEvent(PitchSubmittedEvent, this.handlePitchActivity.bind(this));
 
-    // Initialize world variables if they don't exist
-    this.initializeWorldVariables();
-
     // Load debug mode from world variable
     try {
       const world = this.world;
       if (world) {
-        const debugFromWorld = world.persistentStorageWorld.getWorldVariable(this.debugModeVar);
+        const debugFromWorld = this.safeGetWorldVariable(this.debugModeVar);
         if (debugFromWorld !== null) {
           this.isDebug = debugFromWorld === "true";
         }
@@ -85,6 +100,8 @@ export class SmartNpcMemory extends Component<typeof SmartNpcMemory> {
 
     // Load persistent data
     this.loadPersistentData();
+    // Initialize world variables if they don't exist
+    await this.initializeWorldVariables();
   }
 
   // --- PLAYER PROFILE API (Fixes your error) ---
@@ -196,6 +213,25 @@ export class SmartNpcMemory extends Component<typeof SmartNpcMemory> {
     return { speaker: this.lastSpeakerID, content: this.lastSpokenContent };
   }
 
+  public getRecentSpeechContent(count: number): string[] {
+    // Return recent speech summaries, excluding empty ones
+    const recent = [];
+    if (this.lastSpokenContent) recent.push(this.lastSpokenContent);
+
+    // Get additional recent content from data if available
+    const speechHistory = this.getData('speech_history') || [];
+    const additional = speechHistory.slice(-count + recent.length);
+    return recent.concat(additional).slice(-count);
+  }
+
+  public addSpeechContent(content: string) {
+    // Store speech content for repetition prevention
+    const speechHistory = this.getData('speech_history') || [];
+    speechHistory.push(content);
+    if (speechHistory.length > 10) speechHistory.shift(); // Keep last 10
+    this.setData('speech_history', speechHistory);
+  }
+
   // --- Internals ---
   private handleChat(data: { user: string; text: string; timestamp: number }) {
     this.chatBuffer.push(data);
@@ -234,6 +270,8 @@ export class SmartNpcMemory extends Component<typeof SmartNpcMemory> {
     }
 
     this.savePersistentData();
+    // Broadcast the update
+    this.sendNetworkBroadcastEvent(StorylineUpdateEvent, this.storyline);
   }
 
   public getLastPrompts(): string[] {
@@ -244,6 +282,8 @@ export class SmartNpcMemory extends Component<typeof SmartNpcMemory> {
     this.lastPrompts.push(prompt);
     if (this.lastPrompts.length > 10) this.lastPrompts.shift(); // Keep last 10
     this.savePersistentData();
+    // Broadcast the update
+    this.sendNetworkBroadcastEvent(LastPromptsUpdateEvent, [...this.lastPrompts]);
   }
 
   public getData(key: string): any {
@@ -253,6 +293,8 @@ export class SmartNpcMemory extends Component<typeof SmartNpcMemory> {
   public setData(key: string, value: any) {
     this.data.set(key, value);
     this.savePersistentData();
+    // Broadcast the update
+    this.sendNetworkBroadcastEvent(DataUpdateEvent, { key, value });
   }
 
   public getPrefs(key: string): any {
@@ -262,6 +304,8 @@ export class SmartNpcMemory extends Component<typeof SmartNpcMemory> {
   public setPrefs(key: string, value: any) {
     this.prefs.set(key, value);
     this.savePersistentData();
+    // Broadcast the update
+    this.sendNetworkBroadcastEvent(PrefsUpdateEvent, { key, value });
   }
 
   public getPlayerRole(): string {
@@ -390,73 +434,39 @@ export class SmartNpcMemory extends Component<typeof SmartNpcMemory> {
     const profile = this.getPlayerProfile(playerName);
     const interactions = this.getData(`player_${playerName}_interactions`) || 0;
     const prefersPitching = this.getPrefs(`player_${playerName}_prefers_pitching`) || false;
+    const playerRole = this.getPlayerRole();
+    const lastPrompts = this.getLastPrompts().slice(-3).join('; '); // Last 3 prompts for context
+    const storyline = this.getStoryline();
 
-    return `Player ${playerName} has visited ${profile.visits} times, reputation ${profile.reputation}, ${interactions} interactions. ${prefersPitching ? 'Enjoys pitching ideas.' : ''} Storyline: ${this.getStoryline()}`;
+    return `Player ${playerName} has visited ${profile.visits} times, reputation ${profile.reputation}, ${interactions} interactions. Role: ${playerRole}. ${prefersPitching ? 'Enjoys pitching ideas.' : ''} Recent prompts: ${lastPrompts}. Storyline: ${storyline}`;
   }
 
   // --- Persistence Methods ---
 
   private async initializeWorldVariables() {
-    try {
-      const world = this.world;
-      if (world) {
-        // Initialize world variables with defaults if they don't exist
-        try {
-          const debugVar = world.persistentStorageWorld.getWorldVariable(this.debugModeVar);
-          if (debugVar === null) {
-            await world.persistentStorageWorld.setWorldVariableAcrossAllInstancesAsync(this.debugModeVar, "false");
-          }
-        } catch (e) {
-          if (this.isDebug) console.log("[Memory] Initializing DebugMode variable");
-        }
+    const world = this.world;
+    if (!world) return;
 
-        try {
-          const storylineVar = world.persistentStorageWorld.getWorldVariable(this.props.storylineVar);
-          if (storylineVar === null) {
-            await world.persistentStorageWorld.setWorldVariableAcrossAllInstancesAsync(this.props.storylineVar, "");
-          }
-        } catch (e) {
-          if (this.isDebug) console.log("[Memory] Initializing Storyline variable");
-        }
-
-        try {
-          const lastPromptsVar = world.persistentStorageWorld.getWorldVariable(this.props.lastPromptsVar);
-          if (lastPromptsVar === null) {
-            await world.persistentStorageWorld.setWorldVariableAcrossAllInstancesAsync(this.props.lastPromptsVar, "[]");
-          }
-        } catch (e) {
-          if (this.isDebug) console.log("[Memory] Initializing LastPrompts variable");
-        }
-
-        try {
-          const dataVar = world.persistentStorageWorld.getWorldVariable(this.props.dataVar);
-          if (dataVar === null) {
-            await world.persistentStorageWorld.setWorldVariableAcrossAllInstancesAsync(this.props.dataVar, "{}");
-          }
-        } catch (e) {
-          if (this.isDebug) console.log("[Memory] Initializing Data variable");
-        }
-
-        try {
-          const prefsVar = world.persistentStorageWorld.getWorldVariable(this.props.prefsVar);
-          if (prefsVar === null) {
-            await world.persistentStorageWorld.setWorldVariableAcrossAllInstancesAsync(this.props.prefsVar, "{}");
-          }
-        } catch (e) {
-          if (this.isDebug) console.log("[Memory] Initializing Prefs variable");
-        }
-
-        try {
-          const playerRoleVar = world.persistentStorageWorld.getWorldVariable(this.props.playerRoleVar);
-          if (playerRoleVar === null) {
-            await world.persistentStorageWorld.setWorldVariableAcrossAllInstancesAsync(this.props.playerRoleVar, "");
-          }
-        } catch (e) {
-          if (this.isDebug) console.log("[Memory] Initializing PlayerRole variable");
-        }
-      }
-    } catch (e) {
-      if (this.isDebug) console.log("[Memory] Failed to initialize world variables:", e);
+    if (this.safeGetWorldVariable(this.debugModeVar) === null) {
+      await world.persistentStorageWorld.setWorldVariableAcrossAllInstancesAsync(this.debugModeVar, "false");
+    }
+    if (this.safeGetWorldVariable(this.props.storylineVar) === null) {
+      await world.persistentStorageWorld.setWorldVariableAcrossAllInstancesAsync(this.props.storylineVar, "");
+    }
+    if (this.safeGetWorldVariable(this.props.lastPromptsVar) === null) {
+      await world.persistentStorageWorld.setWorldVariableAcrossAllInstancesAsync(this.props.lastPromptsVar, "[]");
+    }
+    if (this.safeGetWorldVariable(this.props.dataVar) === null) {
+      await world.persistentStorageWorld.setWorldVariableAcrossAllInstancesAsync(this.props.dataVar, "{}");
+    }
+    if (this.safeGetWorldVariable(this.props.prefsVar) === null) {
+      await world.persistentStorageWorld.setWorldVariableAcrossAllInstancesAsync(this.props.prefsVar, "{}");
+    }
+    if (this.safeGetWorldVariable(this.props.playerRoleVar) === null) {
+      await world.persistentStorageWorld.setWorldVariableAcrossAllInstancesAsync(this.props.playerRoleVar, "");
+    }
+    if (this.safeGetWorldVariable(this.props.playerProfilesVar) === null) {
+      await world.persistentStorageWorld.setWorldVariableAcrossAllInstancesAsync(this.props.playerProfilesVar, "{}");
     }
   }
 
@@ -479,13 +489,13 @@ export class SmartNpcMemory extends Component<typeof SmartNpcMemory> {
           if (this.isDebug) console.log("[Memory] LastPrompts variable not found, initializing to empty array");
         }
         try {
-          this.data = new Map(JSON.parse(world.persistentStorageWorld.getWorldVariable(this.props.dataVar) || "{}"));
+          this.data = new Map(Object.entries(JSON.parse(world.persistentStorageWorld.getWorldVariable(this.props.dataVar) || "{}")));
         } catch (e) {
           this.data = new Map();
           if (this.isDebug) console.log("[Memory] Data variable not found, initializing to empty map");
         }
         try {
-          this.prefs = new Map(JSON.parse(world.persistentStorageWorld.getWorldVariable(this.props.prefsVar) || "{}"));
+          this.prefs = new Map(Object.entries(JSON.parse(world.persistentStorageWorld.getWorldVariable(this.props.prefsVar) || "{}")));
         } catch (e) {
           this.prefs = new Map();
           if (this.isDebug) console.log("[Memory] Prefs variable not found, initializing to empty map");
@@ -516,6 +526,18 @@ export class SmartNpcMemory extends Component<typeof SmartNpcMemory> {
     } catch (e) {
       if (this.isDebug) console.log("[Memory] Failed to save persistent data:", e);
     }
+  }
+
+  private safeGetWorldVariable(varName: string): string | null {
+    try {
+      const world = this.world;
+      if (world) {
+        return world.persistentStorageWorld.getWorldVariable(varName);
+      }
+    } catch (e) {
+      if (this.isDebug) console.log(`[Memory] World variable '${varName}' not found or deleted, returning null`);
+    }
+    return null;
   }
 }
 

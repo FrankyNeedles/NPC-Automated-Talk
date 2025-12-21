@@ -95,10 +95,14 @@ export class ShowScheduler extends Component<typeof ShowScheduler> {
     else this.currentTurnDelay = 3.0; // Slightly reduced default delay
 
     if (this.isDebug) console.log(`[Scheduler] LIVE: ${cueData.segment}`);
-    if (this.memory) this.memory.saveGlobalState(cueData.topicID); 
+    if (this.memory) this.memory.saveGlobalState(cueData.topicID);
+
+    // Pre-fetch next segment immediately for zero dead air
+    this.requestNextSegment();
 
     this.cueNextSpeaker();
 
+    // Also request mid-segment as backup
     this.async.setTimeout(() => {
         this.requestNextSegment();
     }, (duration / 2) * 1000);
@@ -151,12 +155,12 @@ export class ShowScheduler extends Component<typeof ShowScheduler> {
 
     this.currentTurn++;
 
-    // UPDATE: Increased Safety Timeout to 60s
+    // Watchdog: Force next turn after 45s if host crashes or lags
     this.watchdogTimer = this.async.setTimeout(() => {
         console.warn(`[Scheduler] Watchdog: ${targetID} timed out!`);
         this.isCurrentlySpeaking = false; // Reset on timeout
         this.cueNextSpeaker();
-    }, 60000);
+    }, 45000);
   }
 
   private retryCueNextSpeaker() {

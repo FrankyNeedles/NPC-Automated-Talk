@@ -8,8 +8,9 @@
  * - Uses human-like timing gaps.
  */
 
-import { Component, PropTypes, NetworkEvent } from 'horizon/core';
-import { Npc, NpcConversation } from 'horizon/npc'; 
+import { Component, PropTypes, NetworkEvent, Entity } from 'horizon/core';
+import { Npc, NpcConversation } from 'horizon/npc';
+import { SmartNpcMemory } from './SmartNpcMemory';
 
 const CueHostEvent = new NetworkEvent<any>('CueHostEvent');
 const HostSpeechCompleteEvent = new NetworkEvent<{ hostID: string; contentSummary: string }>('HostSpeechCompleteEvent');
@@ -23,10 +24,12 @@ export class AutomatedHost extends Component<typeof AutomatedHost> {
     roleDescription: { type: PropTypes.String, default: "TV Anchor", label: "Role Desc" },
     minSpeechDuration: { type: PropTypes.Number, default: 8, label: "Min Floor (s)" },
     padding: { type: PropTypes.Number, default: 2.0, label: "Breath Gap (s)" },
-    debugMode: { type: PropTypes.Boolean, default: false }
+    debugMode: { type: PropTypes.Boolean, default: false },
+    memoryEntity: { type: PropTypes.Entity, label: "Memory Link" }
   };
 
   private npc: Npc | undefined;
+  private memory: SmartNpcMemory | undefined;
   private isBusy: boolean = false;
   private myName: string = "";
 
@@ -41,6 +44,12 @@ export class AutomatedHost extends Component<typeof AutomatedHost> {
       this.myName = "Casey";
     } else {
       this.myName = this.props.displayName;
+    }
+
+    // Initialize memory link
+    if (this.props.memoryEntity) {
+      const ent = this.props.memoryEntity as Entity;
+      this.memory = ent.as(SmartNpcMemory as any) as any;
     }
   }
 
@@ -59,21 +68,32 @@ export class AutomatedHost extends Component<typeof AutomatedHost> {
     const otherName = this.props.partnerName;
 
     // 1. CINEMATIC PROMPT - Hollywood-level natural speech
+    let memoryContext = "";
+    if (this.memory) {
+      const storyline = this.memory.getStoryline();
+      const playerRole = this.memory.getPlayerRole();
+      const lastPrompts = this.memory.getLastPrompts().slice(-3).join('; ');
+      const audienceList = this.memory.getAudienceList().join(', ');
+      const roomVibe = this.memory.getRoomVibe();
+      memoryContext = `\nSTORYLINE: ${storyline}\nPLAYER ROLE: ${playerRole}\nRECENT PROMPTS: ${lastPrompts}\nAUDIENCE: ${audienceList}\nROOM VIBE: ${roomVibe}`;
+    }
+
     const systemPrompt =
       `CHARACTER: You are ${myName}, the ${this.props.roleDescription} on a hit late-night show.\n` +
       `SCENE: Live television discussion about "${data.topic}"\n` +
       `CONTEXT: ${data.context}\n` +
       `YOUR MOTIVATION: "${data.stance}"\n` +
       `CO-HOST JUST SAID: "${data.lastSpeakerContext}"\n` +
-      `DIRECTOR'S NOTES: ${data.instructions}\n` +
+      `DIRECTOR'S NOTES: ${data.instructions}${memoryContext}\n` +
       `PERFORMANCE REQUIREMENTS:\n` +
-      `1. ACTING: Deliver like a Tony Award winner - natural timing, genuine reactions, vocal variety.\n` +
-      `2. CHEMISTRY: Respond to your co-host as an old friend. Reference their points, challenge playfully.\n` +
-      `3. HUMANITY: Add personal touches - "I remember when...", "You know what I mean?", casual asides.\n` +
-      `4. SUBSTANCE: Go deeper than surface level. Connect to real human experiences.\n` +
-      `5. FLOW: Make it conversational - interruptions welcome, natural pauses, authentic speech patterns.\n` +
-      `6. PERSONALITY: ${this.props.hostID === 'HostA' ? 'Warm authority, leads with confidence' : 'Witty challenger, keeps it lively'}\n` +
-      `OUTPUT: Pure spoken dialogue, 1-2 sentences. No stage directions, no quotation marks.`;
+      `1. NATURAL SPEECH: Speak like a real person - use contractions, filler words like "you know", "I mean", vary sentence length.\n` +
+      `2. CHEMISTRY: Respond directly to co-host's points, build on their ideas, show agreement or playful disagreement.\n` +
+      `3. EMOTIONAL DEPTH: Add genuine reactions - surprise, enthusiasm, skepticism. Connect to audience and storyline.\n` +
+      `4. CONVERSATIONAL FLOW: Start with acknowledgment, add personal insight, end with question or transition.\n` +
+      `5. TIMING AWARENESS: Include natural pauses in dialogue for emphasis, questions, or thoughtfulness.\n` +
+      `6. PERSONALITY: ${this.props.hostID === 'HostA' ? 'Warm, authoritative leader who guides the conversation' : 'Witty, engaging challenger who keeps energy high'}\n` +
+      `7. AVOID REPETITION: Never repeat phrases from recent speech history. Be completely original.\n` +
+      `OUTPUT: Pure spoken dialogue, 1-2 sentences. No stage directions, no quotation marks, no asterisks.`;
 
     let finalSpeech = "";
 
@@ -106,7 +126,12 @@ export class AutomatedHost extends Component<typeof AutomatedHost> {
       const tangents = data.topic?.tangents || [];
       const backupPool = [...tangents, ...staticPool];
       finalSpeech = backupPool[Math.floor(Math.random() * backupPool.length)] || "That is an interesting point.";
-      this.npc.conversation.speak(finalSpeech);
+      // Graceful fallback: speak the backup line
+      try {
+        this.npc.conversation.speak(finalSpeech);
+      } catch (ttsError) {
+        if (this.props.debugMode) console.warn(`[Host ${this.props.hostID}] TTS fallback failed:`, ttsError);
+      }
     }
 
     // 2. CLEANER (Sanitize Text)
@@ -115,8 +140,13 @@ export class AutomatedHost extends Component<typeof AutomatedHost> {
                                  .replace(/\[.*?\]/g, "")  // Remove [actions]
                                  .trim();
 
-    // Speak the text immediately
-    this.npc.conversation.speak(cleanText);
+    // Speak the text immediately with error handling
+    try {
+      this.npc.conversation.speak(cleanText);
+    } catch (e) {
+      if (this.props.debugMode) console.warn(`[Host ${this.props.hostID}] TTS failed:`, e);
+      // Fallback: do nothing, as speech completion will still trigger
+    }
 
     // 3. TIMING - Sophisticated WPM with punctuation pauses (110-160 range)
     let baseWpm = 130;

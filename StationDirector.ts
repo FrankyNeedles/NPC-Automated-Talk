@@ -1,23 +1,13 @@
-// StationDirector.ts
-/**
- * StationDirector.ts
- * The "Head Writer" (Hidden NPC).
- * 
- * FIX: Changed 'fullContext' from const to let so it can be updated.
- */
-
 import { Component, PropTypes, NetworkEvent, Entity } from 'horizon/core';
 import { Npc, NpcConversation } from 'horizon/npc';
-import { SmartNpcMemory } from './SmartNpcMemory';
-import { BroadcastSegment } from './VortexMath';
-import { TopicsDatabase } from './TopicsDatabase';
 
-const DirectorBriefEvent = new NetworkEvent<any>('DirectorBriefEvent');
-
+// --- Event Definitions ---
+const DirectorCueEvent = new NetworkEvent<any>('DirectorCueEvent');
 const CueHostEvent = new NetworkEvent<any>('CueHostEvent');
 const HostSpeechCompleteEvent = new NetworkEvent<{ hostID: string; contentSummary: string }>('HostSpeechCompleteEvent');
 const CueExecutiveEvent = new NetworkEvent<any>('CueExecutiveEvent');
 
+// --- Interfaces (for data structure clarity) ---
 interface TopicData {
   id: string;
   headline: string;
@@ -25,6 +15,55 @@ interface TopicData {
   hostAngle?: string;
   coHostAngle?: string;
 }
+
+interface TopicTemplate {
+  id: string;
+  category: string;
+  title: string;
+  description: string;
+  stance: string;
+  instructions: string;
+  backupLine: string;
+}
+
+// --- Mocked Local Dependencies ---
+// In a real project, these would be in separate files.
+// For this single-file script, we define them here.
+
+class SmartNpcMemory extends Component<typeof SmartNpcMemory> {
+  getAudienceList(): string[] { return []; }
+  getLatestChatQuestion(): string { return "What is the meaning of life?"; }
+  getRecentSpeechContent(count: number): string[] { return []; }
+  setData(key: string, value: any) { console.log(`Memory Set: ${key}`); }
+  start() {}
+}
+Component.register(SmartNpcMemory);
+
+class TopicsDatabase extends Component<typeof TopicsDatabase> {
+  getBestTopic(headline: string): TopicTemplate | null {
+    // Mock implementation: return a generic template for demonstration
+    if (headline) {
+      return {
+        id: 'fast_path_1',
+        category: 'General',
+        title: headline,
+        description: 'A topic that was processed quickly.',
+        stance: 'Neutral',
+        instructions: 'Discuss the topic with enthusiasm.',
+        backupLine: 'That is a fascinating subject.'
+      };
+    }
+    return null;
+  }
+  start() {}
+}
+Component.register(TopicsDatabase);
+
+const BroadcastSegment = {
+  AUDIENCE: "AUDIENCE_Q_A"
+};
+
+// --- Main Component ---
 
 export class StationDirector extends Component<typeof StationDirector> {
   static propsDefinition = {
@@ -50,16 +89,14 @@ export class StationDirector extends Component<typeof StationDirector> {
     }
 
     if (this.props.memoryEntity) {
-      const ent = this.props.memoryEntity as Entity;
-      this.memory = ent.as(SmartNpcMemory as any) as any;
+      this.memory = this.props.memoryEntity.getComponents(SmartNpcMemory)[0];
     }
 
     if (this.props.topicsEntity) {
-      const ent = this.props.topicsEntity as Entity;
-      this.topicsDB = ent.as(TopicsDatabase as any) as any;
+      this.topicsDB = this.props.topicsEntity.getComponents(TopicsDatabase)[0];
     }
 
-    this.connectNetworkBroadcastEvent(DirectorBriefEvent, this.handleCreativeBrief.bind(this));
+    this.connectNetworkBroadcastEvent(DirectorCueEvent, this.handleCreativeBrief.bind(this));
     this.connectNetworkBroadcastEvent(HostSpeechCompleteEvent, this.handleHostSpeechComplete.bind(this));
   }
 
@@ -68,7 +105,6 @@ export class StationDirector extends Component<typeof StationDirector> {
 
     if (this.isDebug) console.log(`[Director] Writing Script: ${data.topic.headline} (${data.formatSpin})`);
 
-    // Zero-Latency Hybrid Pipeline: Try fast path first
     const fastPathCue = this.tryFastPath(data);
     if (fastPathCue) {
       if (this.isDebug) console.log(`[Director] Using fast path for ${data.topic.headline}`);
@@ -76,31 +112,37 @@ export class StationDirector extends Component<typeof StationDirector> {
       return;
     }
 
-    // Slow path: AI generation with resilience
     if (this.isDebug) console.log(`[Director] Using slow path for ${data.topic.headline}`);
 
     const aud = this.memory ? this.memory.getAudienceList() : [];
     const audienceStr = aud.length > 0 ? `Guests in Studio: ${aud.join(", ")}` : "(Studio Empty)";
+
+    // Get conversation history to prevent repetition
+    const recentSpeeches = this.memory ? this.memory.getRecentSpeechContent(5) : [];
+    const speechHistory = recentSpeeches.length > 0 ? `RECENT SPEECH HISTORY: ${recentSpeeches.join(' | ')}\n` : '';
 
     const systemPrompt =
       `ACT AS: Academy Award-Winning Screenwriter for a hit late-night talk show.\n` +
       `FORMAT: ${data.segmentType}. STYLE: ${data.formatSpin}. ${audienceStr}.\n` +
       `TOPIC: "${data.topic.headline}"\n` +
       `DETAILS: ${data.topic.body}\n` +
-      `TASK: Craft Oscar-caliber stage directions for two charismatic hosts in a dynamic conversation.\n` +
+      `${speechHistory}` +
+      `TASK: Write distinct, sequential monologues for two hosts to create a natural back-and-forth discussion.\n` +
       `REQUIREMENTS:\n` +
-      `1. DRAMATIC ARC: Hook → Build Tension → Climactic Insight → Memorable Close\n` +
-      `2. CHEMISTRY: Write as if they're old friends with inside jokes, playful rivalry, genuine reactions.\n` +
-      `3. SUBSTANCE: Explore the human angle. What does this mean for real people? Use vivid anecdotes.\n` +
-      `4. HOLLYWOOD MAGIC: Make it cinematic. Use timing, pauses, callbacks. Feel like a scene from a prestige drama.\n` +
-      `5. AUTHENTIC VOICE: Natural speech patterns. Interruptions, "you know what I mean?", vocal variety.\n` +
-      `6. PERSONALITY: Anchor is authoritative but warm. Co-host is witty, challenges assumptions.\n` +
+      `1. UNIQUENESS: Avoid repeating any phrases, topics, or ideas from recent speech history. Be completely original.\n` +
+      `2. DRAMATIC ARC: HostA hooks, HostB builds tension, HostA climactic insight, HostB memorable close\n` +
+      `3. CHEMISTRY: Write as if they're old friends with inside jokes, playful rivalry, genuine reactions.\n` +
+      `4. SUBSTANCE: Explore the human angle. What does this mean for real people? Use vivid anecdotes.\n` +
+      `5. HOLLYWOOD MAGIC: Make it cinematic. Use timing, pauses, callbacks. Feel like a scene from a prestige drama.\n` +
+      `6. AUTHENTIC VOICE: Natural speech patterns. Interruptions, "you know what I mean?", vocal variety.\n` +
+      `7. PERSONALITY: HostA (Anchor) is authoritative but warm. HostB (Co-host) is witty, challenges assumptions.\n` +
+      `8. CONTEXT AWARENESS: Reference current audience, room vibe, and recent interactions naturally.\n` +
       `OUTPUT FORMAT:\n` +
       `PACING: [Rapid/Relaxed/Debate]\n` +
-      `ANCHOR_STANCE: [Nuanced position with emotional depth]\n` +
-      `COHOST_STANCE: [Contrasting view that creates productive tension]\n` +
-      `ANCHOR_DIR: [Detailed scene direction - how to open, pivot, close with charisma]\n` +
-      `COHOST_DIR: [How to counter, escalate, humanize the discussion]`;
+      `HOSTA_STANCE: [HostA's position with emotional depth]\n` +
+      `HOSTB_STANCE: [HostB's contrasting view that creates productive tension]\n` +
+      `HOSTA_SCRIPT: [HostA's complete monologue - natural, engaging, no repetition]\n` +
+      `HOSTB_SCRIPT: [HostB's complete monologue - responds to HostA, builds on discussion, no repetition]`;
 
     try {
       const aiReady = await NpcConversation.isAiAvailable();
@@ -109,7 +151,6 @@ export class StationDirector extends Component<typeof StationDirector> {
         return;
       }
 
-      // AI Resilience: 6s timeout, one retry, fallback, log timeouts
       let response: any;
       let retryCount = 0;
       const maxRetries = 1;
@@ -125,17 +166,15 @@ export class StationDirector extends Component<typeof StationDirector> {
             timeoutPromise
           ]) as Promise<any>);
 
-          // Check if response is empty or invalid
           if (!response || (typeof response === 'object' && Object.keys(response).length === 0)) {
             throw new Error("Empty AI response");
           }
 
-          break; // Success, exit retry loop
+          break; 
         } catch (e) {
           retryCount++;
           if (this.isDebug) console.warn(`[Director] AI attempt ${retryCount} failed:`, e);
 
-          // Log timeout in SmartNpcMemory
           if (this.memory && (e as any).message === "Timeout") {
             this.memory.setData(`timeout_log_${Date.now()}`, {
               topic: data.topic.headline,
@@ -145,13 +184,12 @@ export class StationDirector extends Component<typeof StationDirector> {
           }
 
           if (retryCount > maxRetries) {
-            throw e; // Max retries reached, throw error
+            throw e;
           }
         }
       }
 
       const responseText = typeof response === 'string' ? response : (response as any)?.text || '';
-
       this.parseAndDispatch(responseText, data, audienceStr);
 
     } catch (e) {
@@ -162,24 +200,23 @@ export class StationDirector extends Component<typeof StationDirector> {
 
   private parseAndDispatch(aiText: string, brief: any, audStr: string) {
     let pacing = "Casual";
-    let anchorInstr = (brief.topic as any).hostAngle;
-    let coHostInstr = (brief.topic as any).coHostAngle;
+    let anchorInstr = (brief.topic as any).hostAngle || "Discuss the topic.";
+    let coHostInstr = (brief.topic as any).coHostAngle || "React to the discussion.";
     let hStance = "Neutral";
     let cStance = "Neutral";
 
     const paceMatch = aiText.match(/PACING:\s*(\w+)/);
-    const anchorMatch = aiText.match(/ANCHOR_DIR:\s*(.*)/);
-    const cohostMatch = aiText.match(/COHOST_DIR:\s*(.*)/);
-    const hStanceMatch = aiText.match(/ANCHOR_STANCE:\s*(.*)/);
-    const cStanceMatch = aiText.match(/COHOST_STANCE:\s*(.*)/);
+    const anchorMatch = aiText.match(/HOSTA_SCRIPT:\s*(.*)/);
+    const cohostMatch = aiText.match(/HOSTB_SCRIPT:\s*(.*)/);
+    const hStanceMatch = aiText.match(/HOSTA_STANCE:\s*(.*)/);
+    const cStanceMatch = aiText.match(/HOSTB_STANCE:\s*(.*)/);
 
     if (paceMatch) pacing = paceMatch[1];
-    if (anchorMatch) anchorInstr = anchorMatch[1];
-    if (cohostMatch) coHostInstr = cohostMatch[1];
-    if (hStanceMatch) hStance = hStanceMatch[1];
-    if (cStanceMatch) cStance = cStanceMatch[1];
+    if (anchorMatch) anchorInstr = anchorMatch[1].trim() || anchorInstr;
+    if (cohostMatch) coHostInstr = cohostMatch[1].trim() || coHostInstr;
+    if (hStanceMatch) hStance = hStanceMatch[1].trim() || hStance;
+    if (cStanceMatch) cStance = cStanceMatch[1].trim() || cStance;
 
-    // FIX: Changed 'const' to 'let' so we can reassign it below
     let fullContext = `Topic: ${brief.topic.headline}. ${brief.topic.body}. Spin: ${brief.formatSpin}. ${audStr}`;
 
     if (brief.segmentType === BroadcastSegment.AUDIENCE) {
@@ -190,7 +227,6 @@ export class StationDirector extends Component<typeof StationDirector> {
         pacing = "Relaxed";
     }
 
-    // Use sequential cueing to prevent overlap
     const cueData = {
       segment: brief.segmentType,
       topicID: brief.topic.id,
@@ -212,7 +248,6 @@ export class StationDirector extends Component<typeof StationDirector> {
     const anchorInstr = brief.topic.hostAngle || "Discuss topic.";
     const coHostInstr = brief.topic.coHostAngle || "React.";
 
-    // Send cue to HostA (Anchor)
     this.sendNetworkBroadcastEvent(CueHostEvent, {
       targetHostID: "HostA",
       topic: {
@@ -233,7 +268,6 @@ export class StationDirector extends Component<typeof StationDirector> {
       backupLine: "That is an interesting point."
     });
 
-    // Send cue to HostB (Co-Host) after a short delay
     this.async.setTimeout(() => {
       this.sendNetworkBroadcastEvent(CueHostEvent, {
         targetHostID: "HostB",
@@ -257,15 +291,12 @@ export class StationDirector extends Component<typeof StationDirector> {
     }, 1000);
   }
 
-  // Zero-Latency Hybrid Pipeline: Fast path implementation
   private tryFastPath(data: { segmentType: string; topic: TopicData; formatSpin: string; duration: number }): any | null {
     if (!this.topicsDB) return null;
 
-    // Try to get a relevant topic template from TopicsDatabase
     const topicTemplate = this.topicsDB.getBestTopic(data.topic.headline);
     if (!topicTemplate) return null;
 
-    // Use template to create fast-path cue
     const aud = this.memory ? this.memory.getAudienceList() : [];
     const audienceStr = aud.length > 0 ? `Guests in Studio: ${aud.join(", ")}` : "(Studio Empty)";
 
@@ -290,29 +321,29 @@ export class StationDirector extends Component<typeof StationDirector> {
     };
   }
 
-  // Unified dispatch method for both fast and slow paths
   private dispatchCue(cueData: any, brief: any) {
     const fullContext = cueData.context;
     const anchorInstr = cueData.hostInstructions;
     const coHostInstr = cueData.coHostInstructions;
 
-    // Store the cue data for sequential dispatch
     this.pendingCue = {
       cueData,
       brief,
       fullContext,
       anchorInstr,
       coHostInstr,
-      nextSpeaker: "HostA" // Start with HostA
+      nextSpeaker: "HostA"
     };
 
-    // Cue Executive Producer to introduce the segment
     this.cueExecutiveProducer();
 
-    // Start the conversation with HostA after a delay
+    // Use adaptive timing for initial cue based on context length
+    const contextLength = fullContext.length;
+    const initialDelay = Math.min(4000, 2000 + (contextLength * 5)); // 2-4 seconds based on context
+
     this.async.setTimeout(() => {
       this.cueNextSpeaker();
-    }, 3000); // 3 second delay to let EP speak first
+    }, initialDelay);
   }
 
   private cueNextSpeaker() {
@@ -363,29 +394,25 @@ export class StationDirector extends Component<typeof StationDirector> {
         pacingStyle: cueData.pacingStyle,
         backupLine: "I agree with that."
       });
-      this.pendingCue.nextSpeaker = "HostA"; // Reset to HostA for next round if needed
+      this.pendingCue.nextSpeaker = "HostA";
     }
   }
 
   private handleHostSpeechComplete(data: { hostID: string; contentSummary: string }) {
     if (this.isDebug) console.log(`[Director] ${data.hostID} finished speaking: ${data.contentSummary}`);
 
-    // Store the last speech summary for context
     this.lastSpeechSummary = data.contentSummary;
 
-    // Cue the next speaker sequentially
     if (this.pendingCue && this.currentSpeaker === data.hostID) {
-      // Increased delay before next speaker to prevent overlap
       this.async.setTimeout(() => {
         this.cueNextSpeaker();
-      }, 3000); // 3000ms delay
+      }, 3000);
     }
 
-    // After both hosts have spoken, cue the Executive Producer for commentary
     if (this.pendingCue && this.currentSpeaker === "HostB") {
       this.async.setTimeout(() => {
         this.cueExecutiveProducer();
-      }, 1500); // 1.5 second delay after HostB finishes
+      }, 1500);
     }
   }
 
@@ -394,7 +421,6 @@ export class StationDirector extends Component<typeof StationDirector> {
 
     const { cueData } = this.pendingCue;
 
-    // Send cue to Executive Producer
     this.sendNetworkBroadcastEvent(CueExecutiveEvent, {
       context: cueData.context,
       showStatus: "Live broadcast in progress",

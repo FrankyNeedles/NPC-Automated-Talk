@@ -69,11 +69,21 @@ export class AudienceCoordinator extends Component<typeof AudienceCoordinator> {
 
   private async setupPersona() {
       if (!this.npc) return;
+      let memoryContext = "";
+      if (this.memory) {
+          const storyline = this.memory.getStoryline();
+          const playerRole = this.memory.getPlayerRole();
+          const lastPrompts = this.memory.getLastPrompts().slice(-5).join('; ');
+          const audienceList = this.memory.getAudienceList().join(', ');
+          const roomVibe = this.memory.getRoomVibe();
+          memoryContext = `\nCurrent Storyline: ${storyline}\nPlayer Role: ${playerRole}\nRecent Prompts: ${lastPrompts}\nAudience: ${audienceList}\nRoom Vibe: ${roomVibe}`;
+      }
+
       const context =
         `You are Jamie, the Studio Coordinator.
          Your job is to chat with players and help them pitch TV Show ideas.
          If a player says "Pitch: [Idea]", you should say "SUBMITTING: [Idea]".
-         Otherwise, just be friendly and helpful.`;
+         Otherwise, just be friendly and helpful.${memoryContext}`;
 
       // Inject context into the NPC brain
       // Note: Actual API for setting context varies, simplified here for clarity
@@ -104,7 +114,11 @@ export class AudienceCoordinator extends Component<typeof AudienceCoordinator> {
 
     // Check if there's already an active meeting
     if (this.currentMeeting && this.currentMeeting !== playerName) {
+    try {
       this.npc.conversation.speak(`Sorry ${playerName}, I'm currently helping ${this.currentMeeting}. Please wait your turn!`);
+    } catch (e) {
+      if (this.props.debugMode) console.warn(`[Coordinator] TTS failed:`, e);
+    }
       if (this.memory) {
         this.memory.logDeniedPitch(playerName, "Meeting in progress with another player");
       }
@@ -128,7 +142,11 @@ export class AudienceCoordinator extends Component<typeof AudienceCoordinator> {
 
     // 2. Initial Greet (Optional - AI might do this auto, but we force it for consistency)
     // We use .speak() for the initial hello so it's instant
-    this.npc.conversation.speak(`Hi ${playerName}! Got a show idea? Let's make it great - aim for at least 10 words and keep it positive!`);
+    try {
+      this.npc.conversation.speak(`Hi ${playerName}! Got a show idea? Let's make it great - aim for at least 10 words and keep it positive!`);
+    } catch (e) {
+      if (this.props.debugMode) console.warn(`[Coordinator] TTS failed:`, e);
+    }
   }
 
   private handleExit(player: Player) {
@@ -211,10 +229,14 @@ export class AudienceCoordinator extends Component<typeof AudienceCoordinator> {
     // Note: We don't check if they are here, because we want the NPC to say it anyway
     // "Oh, Franky left, but his idea got approved!"
 
-    if (data.accepted) {
-        this.npc.conversation.speak(`Breaking News! The pitch "${data.reason}" was APPROVED!`);
-    } else {
-        this.npc.conversation.speak(`Update: The pitch was denied. Reason: ${data.reason}`);
+    try {
+      if (data.accepted) {
+          this.npc.conversation.speak(`Breaking News! The pitch "${data.reason}" was APPROVED!`);
+      } else {
+          this.npc.conversation.speak(`Update: The pitch was denied. Reason: ${data.reason}`);
+      }
+    } catch (e) {
+      if (this.props.debugMode) console.warn(`[Coordinator] TTS failed:`, e);
     }
   }
 }
