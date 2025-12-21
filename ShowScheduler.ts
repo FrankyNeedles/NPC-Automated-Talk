@@ -83,7 +83,7 @@ export class ShowScheduler extends Component<typeof ShowScheduler> {
     this.currentTurn = 0;
     this.isSegmentActive = true;
     
-    this.currentStory = NEWS_WIRE.find(s => s.id === cueData.topicID);
+    this.currentStory = NEWS_WIRE.find((s: NewsStory) => s.id === cueData.topicID);
 
     const duration = cueData.duration || 60;
     this.segmentEndTime = Date.now() + (duration * 1000);

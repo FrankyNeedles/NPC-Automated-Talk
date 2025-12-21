@@ -21,17 +21,27 @@ export class AutomatedHost extends Component<typeof AutomatedHost> {
     displayName: { type: PropTypes.String, default: "Host", label: "My Name" },
     partnerName: { type: PropTypes.String, default: "Co-Host", label: "Partner Name" },
     roleDescription: { type: PropTypes.String, default: "TV Anchor", label: "Role Desc" },
-    minSpeechDuration: { type: PropTypes.Number, default: 4, label: "Min Floor (s)" },
-    padding: { type: PropTypes.Number, default: 1.5, label: "Breath Gap (s)" }, 
+    minSpeechDuration: { type: PropTypes.Number, default: 8, label: "Min Floor (s)" },
+    padding: { type: PropTypes.Number, default: 2.0, label: "Breath Gap (s)" },
     debugMode: { type: PropTypes.Boolean, default: false }
   };
 
   private npc: Npc | undefined;
   private isBusy: boolean = false;
+  private myName: string = "";
 
   async start() {
     this.npc = this.entity.as(Npc);
     this.connectNetworkBroadcastEvent(CueHostEvent, this.handleCue.bind(this));
+
+    // Set identity based on hostID
+    if (this.props.hostID === "HostA") {
+      this.myName = "Alex";
+    } else if (this.props.hostID === "HostB") {
+      this.myName = "Casey";
+    } else {
+      this.myName = this.props.displayName;
+    }
   }
 
   private async handleCue(data: any) {
@@ -85,7 +95,17 @@ export class AutomatedHost extends Component<typeof AutomatedHost> {
         throw new Error("AI_OFFLINE");
       }
     } catch (e) {
-      finalSpeech = data.backupLine || "That is an interesting point.";
+      // Dynamic failover backup from tangents/static pool
+      const staticPool = [
+        "That is an interesting point.",
+        "I agree with that.",
+        "Let's hear more about this.",
+        "What do you think about that?",
+        "That's a great observation."
+      ];
+      const tangents = data.topic?.tangents || [];
+      const backupPool = [...tangents, ...staticPool];
+      finalSpeech = backupPool[Math.floor(Math.random() * backupPool.length)] || "That is an interesting point.";
       this.npc.conversation.speak(finalSpeech);
     }
 
@@ -95,14 +115,23 @@ export class AutomatedHost extends Component<typeof AutomatedHost> {
                                  .replace(/\[.*?\]/g, "")  // Remove [actions]
                                  .trim();
 
-    // 3. TIMING
-    let wpm = 135; 
-    if (data.pacingStyle === "Rapid") wpm = 160;
-    if (data.pacingStyle === "Relaxed") wpm = 110;
+    // Speak the text immediately
+    this.npc.conversation.speak(cleanText);
+
+    // 3. TIMING - Sophisticated WPM with punctuation pauses (110-160 range)
+    let baseWpm = 130;
+    if (data.pacingStyle === "Rapid") baseWpm = 160;
+    if (data.pacingStyle === "Relaxed") baseWpm = 110;
+
+    // Count punctuation for pauses
+    const punctuationCount = (cleanText.match(/[.!?;:,]/g) || []).length;
+    const pauseSeconds = punctuationCount * 0.3; // 0.3s per punctuation mark
 
     const estimatedWords = cleanText.length / 5;
-    const estimatedSeconds = (estimatedWords / wpm) * 60;
-    const finalDuration = Math.min(Math.max(this.props.minSpeechDuration, estimatedSeconds), 15.0) + this.props.padding;
+    const speechSeconds = (estimatedWords / baseWpm) * 60;
+    const totalSeconds = speechSeconds + pauseSeconds;
+
+    const finalDuration = Math.min(Math.max(this.props.minSpeechDuration, totalSeconds), 15.0) + this.props.padding;
 
     this.async.setTimeout(() => {
       this.finishSpeaking(data.topic, cleanText);

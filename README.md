@@ -1,89 +1,51 @@
-📡 Broadcast Automation System (ATS)
-Version: 2.0 (Dual-Host Update)
-Platform: Horizon Worlds (Internal API)
-Framework: TypeScript / Horizon GenAI
-📖 Overview
-The Broadcast Automation System (ATS) transforms your Horizon World into a 24/7 automated TV station. Moving beyond simple looping NPCs, this system acts as a "Showrunner," managing two distinct AI hosts (Anchor & Co-Host) who banter, interview the audience, and debate news stories based on a structured run-of-show.
-It utilizes Vortex Math (1-2-4-8-7-5 cycle) to determine pacing and segment types, and Horizon’s Internal AI to generate unique, context-aware dialogue every time.
-✨ Features
-Feature	Description
-🎙️ Dual-Host Banter	Orchestrates turn-taking between an Anchor and a Co-Host. They listen to each other and react to previous statements naturally.
-🎬 AI Producer	A hidden "Director" NPC analyzes the room vibe (Chill vs. Chaotic) and selects the best news story from the database.
-🌀 Vortex Pacing	Cycles through TV formats automatically: Station ID → Headlines → Audience Q&A → Deep Dive Debate → Banter → Commercial.
-👁️ Context Awareness	Hosts acknowledge players standing in the "Studio" trigger zone and answer chat questions directly via the Teleprompter.
-💾 Persistence	Remembers the current "Episode" state and prevents story repetition using World Persistent Variables.
-📂 File Architecture
-The Core Logic
-StationDirector.ts — The Producer. Runs on a hidden NPC. Uses AI to plan the segment and sends "Cue Cards" to the Scheduler.
-ShowScheduler.ts — The Floor Manager. Receives the plan and cues Host A, then Host B, ensuring smooth turn-taking.
-AutomatedHost.ts — The Actor. Attached to visible NPCs. Receives a cue, speaks via AI, and signals when done.
-The Brain & Senses
-SmartNpcMemory.ts — The Memory. Stores variables, tracks who spoke last, and monitors the audience list.
-NpcContextAgent.ts — The Sensor. Tracks player count (Vibe) and detects who is in the Studio Trigger.
-Data & Utilities
-VortexMath.ts — The Clock. Utility library for the pacing cycle and segment duration calculations.
-TopicsDatabase.ts — The News Wire. A structured list of stories, intensity ratings, and stage directions.
-ChatInputTerminal.ts — The Keyboard. Diegetic object for player input.
-StreamChatManager.ts — The Monitor. Displays chat text in-world.
-🛠️ Installation Guide
-1. Variables Setup
-In the Horizon World Editor, open the Variables panel and create the following:
-Name	Scope	Type	Group (Optional)
-Storyline	World	String	-
-LastPrompts	World	String	-
-PlayerRoles	Player	String	-
-Data	Player	Object	NPC
-Prefs	Player	Object	NPC
-2. Scene Hierarchy Setup
-Create the following objects in your world.
-🧠 Object A: The Brain
-Create a Cube (or Empty Object) named Broadcast_System. Keep it hidden or out of the way.
-Attach Scripts: SmartNpcMemory, ShowScheduler, NpcContextAgent.
-Configure Slots:
-ShowScheduler: Set Avg Segment Time to 60. Set Turn Delay to 1.5.
-🎬 Object B: The Hidden Director
-Create an NPC named Director_NPC. Hide this object inside a wall or under the floor.
-Attach Script: StationDirector.
-Configure Slots:
-Memory Link → Drag in Object A (Broadcast_System).
-🎤 Object C & D: The Talent
-Create two visible NPCs on your set.
-Anchor NPC:
-Attach Script: AutomatedHost.
-Host ID → Type: HostA.
-Co-Host NPC:
-Attach Script: AutomatedHost.
-Host ID → Type: HostB.
-🚨 Object E: Studio Trigger
-Create a Trigger Gizmo covering the audience area.
-Select Object A (Broadcast_System).
-In the NpcContextAgent script slots:
-Studio Trigger → Drag in the Trigger Gizmo.
-3. Final Wiring
-Select Object A (Broadcast_System) and configure the ShowScheduler script slots:
-Director Link → Drag in Object B (Director_NPC).
-Memory Link → Drag in Object A (Broadcast_System).
-⚙️ Configuration
-Adding Content (TopicsDatabase.ts)
-To add new stories, edit the NEWS_WIRE array in the script:
-code
-TypeScript
-{
-  id: "story_unique_id",
-  headline: "Title of Story",
-  category: "Tech", // or Politics, Sports, etc.
-  body: "The main facts the AI should reference...",
-  intensity: 8, // 1 (Chill) to 10 (High Energy)
-  hostAngle: "Instruction for Anchor (e.g. Be serious)",
-  coHostAngle: "Instruction for CoHost (e.g. Make a joke)"
-}
-Tuning Pacing (Inspector)
-You can adjust the speed of the show without code changes by selecting Broadcast_System:
-Avg Segment Time: Increase (e.g., to 120) for longer, deeper discussions.
-Turn Delay: Increase (e.g., to 2.0) for longer pauses between speakers.
-🐛 Troubleshooting
-Issue	Solution
-Show doesn't start	Wait 5 seconds after Play. Ensure ShowScheduler is attached to the Brain object.
-NPCs don't speak	Check if World AI is enabled in World Settings. Ensure Director_NPC is an actual NPC entity, not a shape.
-"AI Unavailable" Error	Horizon AI services might be down or region-locked. Check the console for logs.
-Hosts talk over each other	Increase Turn Delay in the Inspector.
+Project Vision: The Living Broadcast Network
+The Core Concept
+To create the first fully autonomous, persistent, and interactive television network inside Horizon Worlds.
+This is not a simple chatbot loop. It is a simulation of a professional broadcast studio, run by a hierarchy of specialized AI agents who plan, direct, schedule, and perform a 24/7 show that adapts to the time of day, the energy of the room, and the creative input of the audience.
+1. The Player Experience
+From the perspective of a visitor entering the world.
+The Arrival (Immersion)
+When a player joins, they don't see NPCs waiting for someone to click them. They walk into a live broadcast in progress.
+The Atmosphere: The "ON AIR" light is glowing red. Two hosts (Anchor & Co-Host) are mid-conversation, debating a news headline or laughing about a viral trend.
+The Pacing: The dialogue is snappy. There are no awkward robotic pauses. They interrupt each other naturally. They don't just read lines; they have opinions.
+The Context: If the room is crowded and chaotic, the hosts are energetic and loud. If it's 3:00 AM and the room is empty, they are having a relaxed, deep-dive philosophical discussion.
+The Interaction (The "Lobby" Game)
+The player isn't just a passive viewer; they are a potential producer.
+The Concierge: In the lobby, they meet Jamie (The Audience Coordinator). Jamie isn't a broadcaster; they are a friend. They recognize "Regulars" ("Hey Franky, back again?") and welcome new guests.
+The Pitch: The player chats with Jamie. "I think you guys should talk about Mars." Jamie uses AI to workshop the idea: "Mars is cool, but what's the hook? Aliens? Elon?"
+The Submission: Once refined, the player submits the pitch.
+The Payoff (Agency)
+The Decision: Moments later, a notification appears. The hidden Executive Producer has reviewed the pitch against the network's standards and schedule.
+The Big Board: The studio monitor updates.
+NOW PLAYING: Tech News
+UP NEXT: Viewer Request - Mars Colony (By Franky)
+The Reward: The current segment ends. The transition music plays. The Hosts come back on air: "Welcome back. We have a special request from a viewer in the lobby..." The player sees their idea come to life in real-time.
+2. The Scene Creator Experience
+From the perspective of a world builder using this system.
+Plug-and-Play Production
+The creator is not writing code; they are staffing a station.
+Deployment: The creator drops the Broadcast_System cube into the scene, hides the Director NPC under the floor, and places the two Host NPCs at a desk.
+Customization: They don't touch scripts. They use Inspector Slots.
+Want a serious news network? Set the Anchor's role to "Serious Journalist" and the Co-Host to "Political Pundit."
+Want a comedy show? Set the roles to "Comedian" and "Heckler."
+Want faster pacing? Slide the "Turn Delay" down.
+Content Control
+The creator controls the narrative through the Topics Database.
+They fill the database with the lore of their specific world, real-world news, or fictional drama.
+The system handles the rest: rotating topics, preventing repetition, and finding creative angles.
+Reliability (Zero Dead Air)
+The creator never has to worry about the show breaking.
+If the AI service goes down, the system seamlessly switches to Logic Mode, using pre-written banter and fallback lines.
+If a player leaves, the memory handles it.
+The show runs infinitely, 24/7, with no maintenance required.
+3. The Technical Philosophy
+How the magic happens under the hood.
+Hierarchical AI: We don't ask one AI to do everything.
+Executive Producer: Strategic logic (Scheduling, Approving).
+Station Director: Creative logic (Writing scripts, Stage Directions).
+Show Scheduler: Traffic control (Timing, Turn-taking).
+Talent: Performance (Acting, Speaking).
+Vortex Math: The show follows a deterministic energy cycle (1-2-4-8-7-5) so the pacing creates a natural emotional journey (Intro -> High Energy -> Deep Dive -> Cool Down) rather than random noise.
+Hybrid Pipeline: We prioritize Speed over Smarts. We execute the show using fast code logic while generating the next segment's AI script in the background. This ensures there is never a pause while the bot "thinks."
+Summary
+This project transforms NPCs from "Vending Machines" (push button, get text) into "Living Actors" who inhabit a world that exists whether the player is there or not. It turns a Horizon World into a living media entity.

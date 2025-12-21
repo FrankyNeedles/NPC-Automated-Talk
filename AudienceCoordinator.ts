@@ -30,6 +30,7 @@ export class AudienceCoordinator extends Component<typeof AudienceCoordinator> {
   
   private playerTimers: Map<number, number> = new Map();
   private activePitchers: string[] = [];
+  private currentMeeting: string | null = null; // One meeting at a time
 
   async start() {
     this.npc = this.entity.as(Npc);
@@ -99,13 +100,27 @@ export class AudienceCoordinator extends Component<typeof AudienceCoordinator> {
   private activateInteraction(player: Player) {
     if (!this.npc) return;
 
+    const playerName = player.name.get();
+
+    // Check if there's already an active meeting
+    if (this.currentMeeting && this.currentMeeting !== playerName) {
+      this.npc.conversation.speak(`Sorry ${playerName}, I'm currently helping ${this.currentMeeting}. Please wait your turn!`);
+      if (this.memory) {
+        this.memory.logDeniedPitch(playerName, "Meeting in progress with another player");
+      }
+      return;
+    }
+
+    // Set current meeting
+    this.currentMeeting = playerName;
+
     // 1. Register Participant (Native Mode)
     this.npc.conversation.registerParticipant(player);
-    this.activePitchers.push(player.name.get());
+    this.activePitchers.push(playerName);
 
     if (this.memory) {
         this.memory.handlePlayerEntry(player);
-        const profile = this.memory.getPlayerProfile(player.name.get());
+        const profile = this.memory.getPlayerProfile(playerName);
 
         // Optional: Send a hidden context update to the AI about this player
         // "Player Franky has visited 5 times."
@@ -113,7 +128,7 @@ export class AudienceCoordinator extends Component<typeof AudienceCoordinator> {
 
     // 2. Initial Greet (Optional - AI might do this auto, but we force it for consistency)
     // We use .speak() for the initial hello so it's instant
-    this.npc.conversation.speak(`Hi ${player.name.get()}! Got a show idea?`);
+    this.npc.conversation.speak(`Hi ${playerName}! Got a show idea? Let's make it great - aim for at least 10 words and keep it positive!`);
   }
 
   private handleExit(player: Player) {
@@ -148,9 +163,38 @@ export class AudienceCoordinator extends Component<typeof AudienceCoordinator> {
           const content = text.split("SUBMITTING:")[1].trim();
           // Find who we are talking to (Simple version: assumed the last active player)
           const user = this.activePitchers.length > 0 ? this.activePitchers[0] : "Player";
-          
-          this.submitPitch(user, content);
+
+          // Validate the pitch
+          const validation = this.validatePitch(content);
+          if (validation.isValid) {
+              this.submitPitch(user, content);
+          } else {
+              // Pitch denied - provide feedback and encouragement
+              this.npc?.conversation.speak(`Sorry ${user}, your pitch was denied: ${validation.reason}. Keep trying - great ideas take time!`);
+              if (this.memory) {
+                  this.memory.logDeniedPitch(user, validation.reason);
+              }
+          }
       }
+  }
+
+  private validatePitch(text: string): { isValid: boolean; reason: string } {
+    // Check minimum word count (10 words)
+    const words = text.trim().split(/\s+/);
+    if (words.length < 10) {
+      return { isValid: false, reason: "Pitch must be at least 10 words long" };
+    }
+
+    // Check for offensive content (basic filter)
+    const offensiveWords = ["offensive", "inappropriate", "hate", "violence", "explicit"]; // Simplified list
+    const lowerText = text.toLowerCase();
+    for (const word of offensiveWords) {
+      if (lowerText.includes(word)) {
+        return { isValid: false, reason: "Pitch contains inappropriate content" };
+      }
+    }
+
+    return { isValid: true, reason: "" };
   }
 
   private submitPitch(user: string, text: string) {
