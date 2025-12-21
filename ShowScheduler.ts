@@ -3,7 +3,9 @@
  * ShowScheduler.ts
  * The "Floor Manager".
  * 
- * UPDATE: Increased Watchdog to 60s to accommodate longer speeches.
+ * FIX: "Safe Pivot Logic"
+ * - Removed hardcoded 'Tangent' injection from the backup line logic.
+ * - Now uses purely generic banter for fallbacks to prevent jarring topic switches (e.g. Sports -> Gene Therapy).
  */
 
 import { Component, PropTypes, NetworkEvent, Entity } from 'horizon/core';
@@ -15,7 +17,6 @@ const RequestSegmentEvent = new NetworkEvent('RequestSegmentEvent');
 const DirectorCueEvent = new NetworkEvent<any>('DirectorCueEvent');
 const CueHostEvent = new NetworkEvent<any>('CueHostEvent');
 const HostSpeechCompleteEvent = new NetworkEvent<{ hostID: string; contentSummary: string }>('HostSpeechCompleteEvent');
-const HostBusyEvent = new NetworkEvent<{ hostID: string }>('HostBusyEvent');
 
 export class ShowScheduler extends Component<typeof ShowScheduler> {
   static propsDefinition = {
@@ -28,20 +29,26 @@ export class ShowScheduler extends Component<typeof ShowScheduler> {
   private isSegmentActive: boolean = false;
   private segmentEndTime: number = 0;
   private isDebug: boolean = false;
-  private currentTurnDelay: number = 1.0;
-  private isCurrentlySpeaking: boolean = false; // Flag to prevent overlap
+  private currentTurnDelay: number = 0.5; // Fast default
 
-  private currentCue: any = null;
-  private nextCue: any = null;
+  private currentCue: any = null; 
+  private nextCue: any = null;    
   private isFetching: boolean = false;
   private watchdogTimer: any = null;
-  private currentStory: NewsStory | undefined;
+  private currentStory: NewsStory | undefined; 
 
-  // Generic Banter Pool
+  // GENERIC FALLBACKS (Context Agnostic)
   private readonly GENERIC_BANTER = [
-    "That is a really good point.", "I honestly never looked at it that way.", "You might be right, but I have my doubts.",
-    "Let's keep moving, we have a lot to cover.", "That reminds me of something I saw online.", "Wait, are you serious?",
-    "Okay, fair enough.", "I'm not touching that one!"
+    "That is a really valid point.",
+    "I honestly never looked at it that way.",
+    "You might be right, but I have my doubts.",
+    "It's definitely a complex issue.",
+    "I think the audience would agree with you there.",
+    "Wait, are you serious right now?",
+    "Okay, fair enough, moving on.",
+    "That is certainly one way to look at it.",
+    "I'm not sure I agree, but I hear you.",
+    "Let's see what the chat thinks about that."
   ];
 
   start() {
@@ -53,7 +60,6 @@ export class ShowScheduler extends Component<typeof ShowScheduler> {
 
     this.connectNetworkBroadcastEvent(DirectorCueEvent, this.handleDirectorResponse.bind(this));
     this.connectNetworkBroadcastEvent(HostSpeechCompleteEvent, this.handleSpeechComplete.bind(this));
-    this.connectNetworkBroadcastEvent(HostBusyEvent, this.handleHostBusy.bind(this));
 
     this.async.setTimeout(() => {
         this.requestNextSegment();
@@ -83,33 +89,30 @@ export class ShowScheduler extends Component<typeof ShowScheduler> {
     this.currentTurn = 0;
     this.isSegmentActive = true;
     
-    this.currentStory = NEWS_WIRE.find((s: NewsStory) => s.id === cueData.topicID);
+    this.currentStory = NEWS_WIRE.find(s => s.id === cueData.topicID);
 
     const duration = cueData.duration || 60;
     this.segmentEndTime = Date.now() + (duration * 1000);
 
     const style = cueData.pacingStyle || "Casual";
-    if (style === "Rapid") this.currentTurnDelay = 2.0; // Slightly reduced for better flow
-    else if (style === "Debate") this.currentTurnDelay = 3.5; // Slightly reduced for debate pacing
-    else if (style === "Relaxed") this.currentTurnDelay = 4.5; // Slightly reduced for relaxed pacing
-    else this.currentTurnDelay = 3.0; // Slightly reduced default delay
+    if (style === "Rapid") this.currentTurnDelay = 0.3;
+    else if (style === "Debate") this.currentTurnDelay = 0.5; 
+    else if (style === "Relaxed") this.currentTurnDelay = 1.5; 
+    else this.currentTurnDelay = 0.8;
 
     if (this.isDebug) console.log(`[Scheduler] LIVE: ${cueData.segment}`);
-    if (this.memory) this.memory.saveGlobalState(cueData.topicID);
-
-    // Pre-fetch next segment immediately for zero dead air
-    this.requestNextSegment();
+    
+    if (this.memory) this.memory.saveGlobalState(cueData.topicID); 
 
     this.cueNextSpeaker();
 
-    // Also request mid-segment as backup
     this.async.setTimeout(() => {
         this.requestNextSegment();
     }, (duration / 2) * 1000);
   }
 
   private cueNextSpeaker() {
-    if (!this.isSegmentActive || !this.currentCue || this.isCurrentlySpeaking) return;
+    if (!this.isSegmentActive || !this.currentCue) return;
 
     if (Date.now() > this.segmentEndTime) {
       this.finishSegment();
@@ -131,15 +134,10 @@ export class ShowScheduler extends Component<typeof ShowScheduler> {
       }
     }
 
-    let backupLine = "";
-    if (Math.random() > 0.5 && this.currentStory && this.currentStory.tangents && this.currentStory.tangents.length > 0) {
-        const tIdx = this.currentTurn % this.currentStory.tangents.length;
-        backupLine = `Speaking of that, what about ${this.currentStory.tangents[tIdx]}?`;
-    } else {
-        backupLine = this.GENERIC_BANTER[Math.floor(Math.random() * this.GENERIC_BANTER.length)];
-    }
-
-    this.isCurrentlySpeaking = true; // Set flag before cueing
+    // SAFE BACKUP (Generic Only)
+    // We removed the 'Tangent' logic here because it was causing context clashes.
+    // If AI fails, we now rely on neutral banter to keep the flow smooth.
+    const backupLine = this.GENERIC_BANTER[Math.floor(Math.random() * this.GENERIC_BANTER.length)];
 
     this.sendNetworkBroadcastEvent(CueHostEvent, {
       targetHostID: targetID,
@@ -148,26 +146,17 @@ export class ShowScheduler extends Component<typeof ShowScheduler> {
       context: this.currentCue.context,
       stance: isHostA ? this.currentCue.hostStance : this.currentCue.coHostStance,
       lastSpeakerContext: lastContext,
-      pacingStyle: this.currentCue.pacingStyle,
+      pacingStyle: this.currentCue.pacingStyle, 
       instructions: instructions,
       backupLine: backupLine
     });
 
     this.currentTurn++;
 
-    // Watchdog: Force next turn after 45s if host crashes or lags
     this.watchdogTimer = this.async.setTimeout(() => {
         console.warn(`[Scheduler] Watchdog: ${targetID} timed out!`);
-        this.isCurrentlySpeaking = false; // Reset on timeout
         this.cueNextSpeaker();
-    }, 45000);
-  }
-
-  private retryCueNextSpeaker() {
-    // Retry after a short delay if host was busy
-    this.async.setTimeout(() => {
-      this.cueNextSpeaker();
-    }, 1000); // Wait 1 second before retrying
+    }, 30000);
   }
 
   private handleSpeechComplete(data: { hostID: string; contentSummary: string }) {
@@ -175,19 +164,12 @@ export class ShowScheduler extends Component<typeof ShowScheduler> {
         this.async.clearTimeout(this.watchdogTimer);
         this.watchdogTimer = null;
     }
-    if (this.memory) this.memory.logBroadcast(data.hostID, data.contentSummary);
 
-    this.isCurrentlySpeaking = false; // Reset flag when speech completes
+    if (this.memory) this.memory.logBroadcast(data.hostID, data.contentSummary);
 
     this.async.setTimeout(() => {
       this.cueNextSpeaker();
-    }, this.currentTurnDelay * 1000);
-  }
-
-  private handleHostBusy(data: { hostID: string }) {
-    if (this.isDebug) console.log(`[Scheduler] Host ${data.hostID} is busy, retrying...`);
-    this.isCurrentlySpeaking = false; // Reset flag so we can retry
-    this.retryCueNextSpeaker();
+    }, this.currentTurnDelay * 1000); 
   }
 
   private finishSegment() {
